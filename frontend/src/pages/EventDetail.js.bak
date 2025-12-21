@@ -1,0 +1,381 @@
+import React, { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { getEvent, getPilots, saveEventResults, updateEventStatus } from '../services/api';
+
+const EventDetail = () => {
+  const { id } = useParams();
+  const [event, setEvent] = useState(null);
+  const [pilots, setPilots] = useState([]);
+  const [results, setResults] = useState([]);
+  const [specialResults, setSpecialResults] = useState([]); // DNF, DSQ, DNS
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    loadEventData();
+  }, [id]);
+
+  const loadEventData = async () => {
+    const eventData = await getEvent(id);
+    const pilotsData = await getPilots();
+    
+    setEvent(eventData);
+    setPilots(pilotsData);
+    
+    if (eventData.results && eventData.results.length > 0) {
+      // Séparer les résultats normaux des statuts spéciaux
+      const normalResults = eventData.results.filter(r => !r.status);
+      const specialResults = eventData.results.filter(r => r.status);
+      
+      setResults(normalResults.length > 0 
+        ? normalResults.map(r => ({ position: r.position, pilot_id: r.pilot_id }))
+        : Array.from({ length: 10 }, (_, i) => ({ position: i + 1, pilot_id: null }))
+      );
+      
+      setSpecialResults(specialResults.map(r => ({ 
+        pilot_id: r.pilot_id, 
+        status: r.status 
+      })));
+    } else {
+      setResults(Array.from({ length: 10 }, (_, i) => ({
+        position: i + 1,
+        pilot_id: null
+      })));
+      setSpecialResults([]);
+    }
+  };
+
+  const handlePilotChange = (position, pilotId) => {
+    const newResults = [...results];
+    const index = newResults.findIndex(r => r.position === position);
+    
+    if (index !== -1) {
+      newResults[index].pilot_id = pilotId ? parseInt(pilotId) : null;
+    }
+    
+    setResults(newResults);
+  };
+
+  const getAvailablePilotsForPosition = (currentPosition) => {
+    const selectedPilotIds = results
+      .filter(r => r.position !== currentPosition && r.pilot_id)
+      .map(r => r.pilot_id);
+    
+    const specialPilotIds = specialResults.map(r => r.pilot_id);
+    
+    return pilots.filter(p => !selectedPilotIds.includes(p.id) && !specialPilotIds.includes(p.id));
+  };
+
+  const getAvailablePilotsForSpecial = (currentIndex) => {
+    const selectedPilotIds = results
+      .filter(r => r.pilot_id)
+      .map(r => r.pilot_id);
+    
+    const otherSpecialPilotIds = specialResults
+      .filter((_, idx) => idx !== currentIndex)
+      .map(r => r.pilot_id);
+    
+    return pilots.filter(p => !selectedPilotIds.includes(p.id) && !otherSpecialPilotIds.includes(p.id));
+  };
+
+  const handleAddSpecialResult = () => {
+    setSpecialResults([...specialResults, { pilot_id: null, status: 'DNF' }]);
+  };
+
+  const handleRemoveSpecialResult = (index) => {
+    const newSpecialResults = specialResults.filter((_, idx) => idx !== index);
+    setSpecialResults(newSpecialResults);
+  };
+
+  const handleSpecialPilotChange = (index, pilotId) => {
+    const newSpecialResults = [...specialResults];
+    newSpecialResults[index].pilot_id = pilotId ? parseInt(pilotId) : null;
+    setSpecialResults(newSpecialResults);
+  };
+
+  const handleSpecialStatusChange = (index, status) => {
+    const newSpecialResults = [...specialResults];
+    newSpecialResults[index].status = status;
+    setSpecialResults(newSpecialResults);
+  };
+
+  const handleSaveResults = async () => {
+    const validResults = results.filter(r => r.pilot_id !== null);
+    const validSpecialResults = specialResults.filter(r => r.pilot_id !== null);
+    
+    if (validResults.length === 0 && validSpecialResults.length === 0) {
+      setMessage('Veuillez saisir au moins un résultat');
+      return;
+    }
+
+    try {
+      const allResults = [
+        ...validResults,
+        ...validSpecialResults
+      ];
+      
+      await saveEventResults(id, allResults);
+      setMessage('Résultats enregistrés avec succès !');
+      loadEventData();
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error) {
+      setMessage('Erreur lors de l\'enregistrement des résultats');
+    }
+  };
+
+  const handleStatusChange = async (newStatus) => {
+    try {
+      await updateEventStatus(id, newStatus);
+      setMessage(`Statut changé: ${newStatus === 'upcoming' ? 'À venir' : newStatus === 'ongoing' ? 'En cours' : 'Terminée'}`);
+      loadEventData();
+      setTimeout(() => setMessage(''), 3000);
+    } catch (error) {
+      setMessage('Erreur lors du changement de statut');
+    }
+  };
+
+  const getPointsForPosition = (position) => {
+    const pointsSystem = {
+      1: 25, 2: 18, 3: 15, 4: 12, 5: 10,
+      6: 8, 7: 6, 8: 4, 9: 2, 10: 1
+    };
+    return pointsSystem[position] || 0;
+  };
+
+  const getStatusLabel = (status) => {
+    // On retourne juste le code court
+    return status;
+  };
+
+  const getStatusBadgeClass = (status) => {
+    const classes = {
+      'DNF': 'badge-dnf',
+      'DSQ': 'badge-dsq',
+      'DNS': 'badge-dns'
+    };
+    return classes[status] || 'badge-secondary';
+  };
+
+  if (!event) {
+    return <div className="loading">Chargement...</div>;
+  }
+
+  return (
+    <div className="container">
+      <Link to="/events" style={{color: 'white', textDecoration: 'none', display: 'inline-block', marginBottom: '20px'}}>
+        ← Retour aux événements
+      </Link>
+      
+      <h1 className="title">{event.name}</h1>
+      <p className="subtitle">
+        {event.circuit} - {new Date(event.event_date).toLocaleDateString('fr-FR')}
+      </p>
+      
+      {message && (
+        <div className={`message ${message.includes('Erreur') ? 'message-error' : 'message-success'}`}>
+          {message}
+        </div>
+      )}
+      
+      <div className="card">
+        <h2>📋 Informations</h2>
+        <p>
+          <strong>Statut:</strong>{' '}
+          <span className={`badge badge-${event.status === 'upcoming' ? 'upcoming' : event.status === 'ongoing' ? 'ongoing' : 'finished'}`}>
+            {event.status === 'upcoming' ? 'À venir' : event.status === 'ongoing' ? 'En cours' : 'Terminée'}
+          </span>
+        </p>
+        {event.championship_name && (
+          <p style={{marginTop: '10px'}}>
+            <strong>Championnat:</strong> {event.championship_name}
+          </p>
+        )}
+        
+        <div style={{marginTop: '20px'}}>
+          <strong>Changer le statut:</strong>
+          <div style={{marginTop: '10px'}}>
+            <button 
+              onClick={() => handleStatusChange('upcoming')}
+              className="btn btn-warning"
+              disabled={event.status === 'upcoming'}
+            >
+              À venir
+            </button>
+            <button 
+              onClick={() => handleStatusChange('ongoing')}
+              className="btn btn-danger"
+              disabled={event.status === 'ongoing'}
+              style={{ color: event.status === 'ongoing' ? '#000' : '#fff' }}
+            >
+              En cours
+            </button>
+            <button 
+              onClick={() => handleStatusChange('finished')}
+              className="btn btn-success"
+              disabled={event.status === 'finished'}
+              style={{ color: event.status === 'finished' ? '#000' : '#fff' }}
+            >
+              Terminée
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <div className="card">
+        <h2>🏁 Saisir les résultats</h2>
+        <p style={{marginBottom: '20px', color: '#666'}}>
+          Saisissez les 10 premiers arrivants (seuls les 10 premiers marquent des points)
+        </p>
+        
+        {pilots.length === 0 ? (
+          <p style={{color: '#dc3545'}}>
+            Aucun pilote disponible. <Link to="/pilots">Créez des pilotes d'abord</Link>
+          </p>
+        ) : (
+          <>
+            {results.map((result) => {
+              const availablePilots = getAvailablePilotsForPosition(result.position);
+              const selectedPilot = pilots.find(p => p.id === result.pilot_id);
+              
+              return (
+                <div key={result.position} className="results-input">
+                  <span>P{result.position}</span>
+                  <select
+                    value={result.pilot_id || ''}
+                    onChange={(e) => handlePilotChange(result.position, e.target.value)}
+                  >
+                    <option value="">-- Sélectionnez un pilote --</option>
+                    {selectedPilot && (
+                      <option value={selectedPilot.id}>
+                        {selectedPilot.name} {selectedPilot.is_human ? '(Humain)' : '(IA)'}
+                      </option>
+                    )}
+                    {availablePilots
+                      .filter(p => p.id !== result.pilot_id)
+                      .map(pilot => (
+                        <option key={pilot.id} value={pilot.id}>
+                          {pilot.name} {pilot.is_human ? '(Humain)' : '(IA)'}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="badge badge-success" style={{minWidth: '60px'}}>
+                    {getPointsForPosition(result.position)} pts
+                  </span>
+                </div>
+              );
+            })}
+            
+            <div style={{marginTop: '30px', paddingTop: '30px', borderTop: '2px dashed #e0e0e0'}}>
+              <h3 style={{marginBottom: '15px', color: '#666'}}>Autres participants (DNF, Disqualifiés, Absents)</h3>
+              <p style={{fontSize: '14px', color: '#666', marginBottom: '15px'}}>
+                Ajoutez ici les pilotes qui n'ont pas terminé dans les points (0 point mais participation comptée)
+              </p>
+              
+              {specialResults.map((result, index) => {
+                const availablePilots = getAvailablePilotsForSpecial(index);
+                const selectedPilot = pilots.find(p => p.id === result.pilot_id);
+                
+                return (
+                  <div key={index} className="results-input" style={{background: '#fff3cd'}}>
+                    <select
+                      value={result.pilot_id || ''}
+                      onChange={(e) => handleSpecialPilotChange(index, e.target.value)}
+                      style={{flex: 2}}
+                    >
+                      <option value="">-- Sélectionnez un pilote --</option>
+                      {selectedPilot && (
+                        <option value={selectedPilot.id}>
+                          {selectedPilot.name} {selectedPilot.is_human ? '(Humain)' : '(IA)'}
+                        </option>
+                      )}
+                      {availablePilots
+                        .filter(p => p.id !== result.pilot_id)
+                        .map(pilot => (
+                          <option key={pilot.id} value={pilot.id}>
+                            {pilot.name} {pilot.is_human ? '(Humain)' : '(IA)'}
+                          </option>
+                        ))}
+                    </select>
+                    
+                    <select
+                      value={result.status}
+                      onChange={(e) => handleSpecialStatusChange(index, e.target.value)}
+                      style={{flex: 1}}
+                    >
+                      <option value="DNF">Abandon (DNF)</option>
+                      <option value="DSQ">Disqualifié</option>
+                      <option value="DNS">Absent (DNS)</option>
+                    </select>
+                    
+                    <button
+                      onClick={() => handleRemoveSpecialResult(index)}
+                      className="btn btn-danger"
+                      style={{padding: '8px 12px'}}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+              
+              <button 
+                onClick={handleAddSpecialResult}
+                className="btn btn-secondary"
+                style={{marginTop: '10px'}}
+              >
+                + Ajouter DNF / Disqualifié / Absent
+              </button>
+            </div>
+            
+            <button 
+              onClick={handleSaveResults}
+              className="btn btn-primary"
+              style={{marginTop: '30px'}}
+            >
+              💾 Enregistrer les résultats
+            </button>
+          </>
+        )}
+      </div>
+      
+      {event.results && event.results.length > 0 && (
+        <div className="card">
+          <h2>🏆 Résultats enregistrés</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Position</th>
+                <th>Pilote</th>
+                <th>Type</th>
+                <th>Points</th>
+              </tr>
+            </thead>
+            <tbody>
+              {event.results.map((result) => (
+                <tr key={result.id}>
+                  <td className="position">
+                    {result.status ? (
+                      <span className={`badge ${getStatusBadgeClass(result.status)}`}>
+                        {getStatusLabel(result.status)}
+                      </span>
+                    ) : (
+                      `P${result.position}`
+                    )}
+                  </td>
+                  <td>{result.pilot_name}</td>
+                  <td>
+                    <span className={`badge ${result.is_human ? 'badge-human' : 'badge-ai'}`}>
+                      {result.is_human ? 'Humain' : 'IA'}
+                    </span>
+                  </td>
+                  <td className="points">{result.points}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default EventDetail;

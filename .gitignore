@@ -1,0 +1,101 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+package-lock.json
+
+# Production
+build/
+dist/
+frontend/build/
+backend/public/
+ChampionshipManager-Release/
+
+# Database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+package-lock.json
+
+# Production
+build/
+dist/
+frontend/build/
+backend/public/
+ChampionshipManager-Release/
+
+# Database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build files
+*.exe
+*.tar.gz
+
+# AMS2 plugin (non fonctionnel)
+ams2-server-plugin/
+
+# Temporary files
+*.tmp
+*.temp
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build files
+*.exe
+*.tar.gz
+
+# AMS2 plugin (non fonctionnel)
+ams2-server-plugin/
+
+# Temporary files
+*.tmp
+*.temp

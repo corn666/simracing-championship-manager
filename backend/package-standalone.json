@@ -1,0 +1,28 @@
+{
+  "name": "gt3-championship-standalone",
+  "version": "1.0.0",
+  "description": "GT3 Championship Manager - Executable Standalone",
+  "main": "server-standalone-v3.js",
+  "scripts": {
+    "build": "pkg . --targets node18-win-x64 --output ../dist/ChampionshipManager.exe",
+    "build-all": "pkg . --targets node18-win-x64,node18-linux-x64,node18-macos-x64 --output ../dist/ChampionshipManager"
+  },
+  "bin": "server-standalone-v3.js",
+  "pkg": {
+    "assets": [
+      "database.js",
+      "public/**/*",
+      "node_modules/sql.js/dist/sql-wasm.wasm"
+    ],
+    "outputPath": "../dist"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "sql.js": "^1.10.3",
+    "body-parser": "^1.20.2"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}
