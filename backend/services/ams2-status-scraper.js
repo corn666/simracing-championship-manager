@@ -15,11 +15,27 @@ function parseStatusPage(html) {
   const participants = [];
   let trackId = null;
 
-  // Extraire le Track ID depuis la section "Session Attributes"
-  // Chercher la ligne qui contient TrackId
-  const trackIdMatch = html.match(/<th[^>]*title="[^"]*Track id[^"]*">TrackId<\/th>\s*<\/tr>\s*<tr>\s*<td[^>]*>(\d+|-?\d+)<\/td>/i);
+  // MÉTHODE 1: Chercher "TrackId" dans Session Attributes
+  let trackIdMatch = html.match(/>TrackId<\/th>\s*<\/tr>\s*<tr>\s*<td[^>]*>(-?\d+)<\/td>/i);
+  
   if (trackIdMatch) {
     trackId = parseInt(trackIdMatch[1]);
+  } else {
+    // MÉTHODE 2: Chercher directement après "TrackId" sans contrainte de structure
+    trackIdMatch = html.match(/TrackId<\/th>[\s\S]*?<td[^>]*>(-?\d+)<\/td>/i);
+    
+    if (trackIdMatch) {
+      trackId = parseInt(trackIdMatch[1]);
+    } else {
+      // MÉTHODE 3: Chercher n'importe quel chiffre après "TrackId"
+      trackIdMatch = html.match(/TrackId[\s\S]{0,200}>(-?\d+)</i);
+      
+      if (trackIdMatch) {
+        trackId = parseInt(trackIdMatch[1]);
+      } else {
+        console.error('Impossible de trouver le Track ID dans le HTML');
+      }
+    }
   }
 
   // Trouver la section "Session Participants"
@@ -103,7 +119,8 @@ function fetchStatusHtml(serverUrl) {
       hostname: url.hostname,
       port: url.port || 80,
       path: '/status',
-      method: 'GET'
+      method: 'GET',
+      timeout: 5000
     };
 
     const req = http.request(options, (res) => {
@@ -120,6 +137,11 @@ function fetchStatusHtml(serverUrl) {
 
     req.on('error', (err) => {
       reject(err);
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Timeout'));
     });
 
     req.end();

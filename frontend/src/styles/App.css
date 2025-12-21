@@ -1845,3 +1845,52 @@ table td.points {
 .time-green {
   color: #00ff00 !important;
 }
+
+/* ========================================
+   AJOUTS POUR PIT WALL - ANIMATIONS
+   ======================================== */
+
+/* Animation pour changement de position */
+.position-changed {
+  animation: positionChange 0.5s ease-out;
+}
+
+@keyframes positionChange {
+  0% {
+    background-color: rgba(255, 215, 0, 0.3);
+    transform: translateX(-10px);
+  }
+  100% {
+    background-color: transparent;
+    transform: translateX(0);
+  }
+}
+
+/* Amélioration des couleurs pour Pit Wall */
+.time-purple {
+  color: #e10fff !important;
+  font-weight: bold;
+  text-shadow: 0 0 5px rgba(225, 15, 255, 0.5);
+}
+
+.time-green {
+  color: #00ff00 !important;
+  font-weight: bold;
+  text-shadow: 0 0 3px rgba(0, 255, 0, 0.3);
+}
+
+/* Badge de statut Racing */
+.class-badge.racing {
+  background: #4CAF50 !important;
+  color: #000 !important;
+}
+
+/* Transition douce pour toutes les lignes du tableau */
+.pit-wall-table tbody tr {
+  transition: all 0.5s ease-out, background-color 0.2s ease-out;
+}
+
+/* Animation au survol avec ease-out */
+.pit-wall-table tbody tr:hover {
+  transition: background-color 0.3s ease-out;
+}

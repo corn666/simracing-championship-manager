@@ -95,7 +95,7 @@ function parseRaceData(jsonData) {
     resultsArray.forEach(r => {
       if (r.attributes.FastestLapTime > 0 && r.attributes.FastestLapTime < bestLapTime) {
         bestLapTime = r.attributes.FastestLapTime;
-        fastestDriver = r.name;
+        fastestDriver = r.name || 'Unknown';  // FIX: Protection contre undefined
       }
     });
 
@@ -116,7 +116,7 @@ function parseRaceData(jsonData) {
       if (!hasResult) {
         // Créer un résultat fictif pour ce participant
         const fakeResult = {
-          name: p.name,
+          name: p.name || p.Name || 'Unknown',  // FIX: Protection contre undefined
           refid: p.refid,
           is_player: p.is_player,
           participantid: Object.keys(participants).find(key => participants[key].RefId === p.refid),
@@ -153,8 +153,18 @@ function parseRaceData(jsonData) {
       const leaderTime = resultsArray[0]?.attributes.TotalTime || 0;
       const gap = attrs.TotalTime - leaderTime;
       
+      // FIX: Convertir events en tableau si c'est un objet
+      let eventsArray = [];
+      if (raceSession.events) {
+        if (Array.isArray(raceSession.events)) {
+          eventsArray = raceSession.events;
+        } else if (typeof raceSession.events === 'object') {
+          eventsArray = Object.values(raceSession.events);
+        }
+      }
+      
       // Récupérer le dernier événement "Lap" pour ce pilote
-      const lapEvents = (raceSession.events || [])
+      const lapEvents = eventsArray
         .filter(e => e.event_name === 'Lap' && e.participantid === result.participantid)
         .sort((a, b) => b.time - a.time);
       
@@ -168,7 +178,7 @@ function parseRaceData(jsonData) {
 
       return {
         pos: attrs.RacePosition,
-        name: result.name.replace(' (AI)', ''),
+        name: (result?.name || 'Unknown').replace(' (AI)', ''),  // FIX: Protection contre undefined
         vehicle: vehicleInfo?.name || 'Unknown',
         class: vehicleInfo?.class || 'Unknown',
         pitInfo: '0 (0L)', // TODO: Calculer les arrêts
@@ -202,7 +212,7 @@ function parseRaceData(jsonData) {
         startTime: formatStartTime(lastRace.start_time),
         classLeader: 'GT3',
         bestLap: formatTime(bestLapTime),
-        fastestDriver: fastestDriver.replace(' (AI)', ''),
+        fastestDriver: (fastestDriver || 'Unknown').replace(' (AI)', ''),  // FIX: Protection contre undefined
         isFinished: lastRace.finished === true,
         raceIndex: lastRace.index
       },
@@ -336,8 +346,18 @@ router.get('/driver-laps/:participantId', async (req, res) => {
       return res.json([]);
     }
 
+    // FIX: Convertir events en tableau si c'est un objet
+    let eventsArray = [];
+    if (lastRace.stages.race1.events) {
+      if (Array.isArray(lastRace.stages.race1.events)) {
+        eventsArray = lastRace.stages.race1.events;
+      } else if (typeof lastRace.stages.race1.events === 'object') {
+        eventsArray = Object.values(lastRace.stages.race1.events);
+      }
+    }
+
     // Extraire les événements Lap pour ce pilote
-    const lapEvents = (lastRace.stages.race1.events || [])
+    const lapEvents = eventsArray
       .filter(e => e.event_name === 'Lap' && e.participantid === participantId)
       .sort((a, b) => a.attributes.Lap - b.attributes.Lap)
       .map(e => ({

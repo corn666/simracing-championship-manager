@@ -6,16 +6,15 @@ function PitWall() {
   const [trackMap, setTrackMap] = useState(null);
   const [currentTrackId, setCurrentTrackId] = useState(null);
   const [participants, setParticipants] = useState([]);
+  const [previousPositions, setPreviousPositions] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [trackMapError, setTrackMapError] = useState(null);
   const [hoveredParticipant, setHoveredParticipant] = useState(null);
   const canvasRef = useRef(null);
 
   // Polling des positions toutes les 250ms
   useEffect(() => {
-    // Charger Spa par défaut au démarrage
-    loadTrackMap('775712153');
-    
     fetchLivePositions(); // Premier appel immédiat
     
     const interval = setInterval(() => {
@@ -25,9 +24,9 @@ function PitWall() {
     return () => clearInterval(interval);
   }, []);
 
-  // Charger le tracé quand trackId change (et différent du défaut)
+  // Charger le tracé quand trackId change
   useEffect(() => {
-    if (currentTrackId && currentTrackId !== 775712153) {
+    if (currentTrackId) {
       loadTrackMap(currentTrackId);
     }
   }, [currentTrackId]);
@@ -37,18 +36,16 @@ function PitWall() {
       const response = await fetch(`${API_BASE_URL}/api/trackmaps/${trackId}`);
       
       if (!response.ok) {
-        setError(`Tracé non disponible pour le circuit ${trackId}`);
-        setLoading(false);
+        const errorMsg = `Tracé non disponible pour le circuit ${trackId}`;
+        setTrackMapError(errorMsg);
         return;
       }
       
       const data = await response.json();
       setTrackMap(data);
-      setLoading(false);
+      setTrackMapError(null);
     } catch (err) {
-      console.error('Erreur:', err);
-      setError(err.message);
-      setLoading(false);
+      setTrackMapError(err.message);
     }
   };
 
@@ -61,20 +58,33 @@ function PitWall() {
       }
       
       const data = await response.json();
+      
+      // Sauvegarder les positions précédentes pour l'animation
+      const newPositions = {};
+      data.participants.forEach((p, index) => {
+        newPositions[p.participantId] = index + 1;
+      });
+      setPreviousPositions(newPositions);
+      
       setParticipants(data.participants || []);
       
-      // Charger le circuit si trackId change
+      // Charger le circuit si trackId change (première fois ou changement)
       if (data.trackId && data.trackId !== currentTrackId) {
         setCurrentTrackId(data.trackId);
       }
+      
+      setError(null);
+      setLoading(false);
     } catch (err) {
       console.error('Erreur fetch positions:', err);
+      setError(err.message);
+      setLoading(false);
     }
   };
 
   // Dessiner le circuit + participants
   useEffect(() => {
-    if (trackMap && canvasRef.current) {
+    if (canvasRef.current) {
       drawScene();
     }
   }, [trackMap, participants, hoveredParticipant]);
@@ -84,9 +94,33 @@ function PitWall() {
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+
+    // Effacer et fond noir
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    // Si pas de trackMap, afficher un message
+    if (!trackMap) {
+      ctx.fillStyle = '#666';
+      ctx.font = '16px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        trackMapError || 'Chargement du circuit...', 
+        canvasWidth / 2, 
+        canvasHeight / 2
+      );
+      return;
+    }
+
     const coordinates = trackMap.line_mid;
 
     if (!coordinates || coordinates.length === 0) {
+      ctx.fillStyle = '#666';
+      ctx.font = '16px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Aucune donnée de tracé disponible', canvasWidth / 2, canvasHeight / 2);
       return;
     }
 
@@ -105,9 +139,6 @@ function PitWall() {
     const trackHeight = maxY - minY;
 
     const padding = 30;
-    const canvasWidth = canvas.width;
-    const canvasHeight = canvas.height;
-
     const scaleX = (canvasWidth - padding * 2) / trackWidth;
     const scaleY = (canvasHeight - padding * 2) / trackHeight;
     const scale = Math.min(scaleX, scaleY);
@@ -120,13 +151,6 @@ function PitWall() {
       x: offsetX + (x - minX) * scale,
       y: offsetY + (maxY - y) * scale // Inverser Y
     });
-
-    // Effacer
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-    // Fond noir
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
     // Dessiner le circuit
     ctx.strokeStyle = '#2d5c2d';
@@ -271,10 +295,17 @@ function PitWall() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
   };
 
+  const formatSector = (ms) => {
+    if (!ms || ms === 0) return '---.---';
+    const seconds = Math.floor(ms / 1000);
+    const millis = ms % 1000;
+    return `${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+  };
+
   if (loading) {
     return (
       <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#0a0a0a'}}>
-        <div style={{color: '#4CAF50', fontSize: '24px'}}>Chargement...</div>
+        <div style={{color: '#4CAF50', fontSize: '24px'}}>Chargement des données live...</div>
       </div>
     );
   }
@@ -287,11 +318,11 @@ function PitWall() {
     );
   }
 
-  // Trier par meilleur temps (fastest lap)
+  // Trier par meilleur temps (fastest lap) - meilleur temps en premier
   const sortedParticipants = [...participants].sort((a, b) => {
     // Si pas de temps, mettre à la fin
-    if (!a.fastestLapTime) return 1;
-    if (!b.fastestLapTime) return -1;
+    if (!a.fastestLapTime || a.fastestLapTime === 0) return 1;
+    if (!b.fastestLapTime || b.fastestLapTime === 0) return -1;
     return a.fastestLapTime - b.fastestLapTime;
   });
 
@@ -309,8 +340,8 @@ function PitWall() {
       height: '100vh',
       overflow: 'hidden'
     }}>
-      {/* Canvas circuit */}
-      <div style={{ flex: '0 0 45%' }}>
+      {/* Canvas circuit - TOUJOURS affiché */}
+      <div style={{ flex: '0 0 40%' }}>
         <canvas
           ref={canvasRef}
           width={1000}
@@ -326,61 +357,75 @@ function PitWall() {
             height: 'auto'
           }}
         />
+        {/* Info sous le canvas */}
+        <div style={{ color: '#666', fontSize: '12px', marginTop: '10px', textAlign: 'center' }}>
+          {currentTrackId ? `Circuit ID: ${currentTrackId}` : 'En attente du circuit...'}
+        </div>
       </div>
 
-      {/* Tableau timing */}
-      <div style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
-        <table className="pit-wall-table" style={{ width: '100%' }}>
-          <thead>
-            <tr>
-              <th className="col-pos">POS</th>
-              <th className="col-driver">DRIVER</th>
-              <th className="col-time">S1</th>
-              <th className="col-time">S2</th>
-              <th className="col-time">S3</th>
-              <th className="col-time">LAST LAP</th>
-              <th className="col-time">BEST LAP</th>
-              <th className="col-pit">STATUS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedParticipants.map((p, index) => (
-              <tr 
-                key={p.participantId}
-                className={p.isPlayer ? 'player-row' : ''}
-                style={{
-                  transition: 'all 0.3s ease-out',
-                  transform: 'translateY(0)'
-                }}
-              >
-                <td className="col-pos">
-                  <div className="position-badge" style={{ backgroundColor: p.isPlayer ? '#00ff00' : '#666' }}>
-                    {index + 1}
-                  </div>
-                </td>
-                <td className="col-driver">
-                  <div className="driver-info">
-                    {p.isPlayer && <span className="player-icon">👤</span>}
-                    <span className="driver-name">{p.name}</span>
-                  </div>
-                </td>
-                <td className="col-time">{formatTime(p.sector1Time)}</td>
-                <td className="col-time">{formatTime(p.sector2Time)}</td>
-                <td className="col-time">{formatTime(p.sector3Time)}</td>
-                <td className="col-time">{formatTime(p.lastLapTime)}</td>
-                <td className={`col-time ${p.fastestLapTime === globalBest && globalBest ? 'time-purple' : p.fastestLapTime ? 'time-green' : ''}`}>
-                  {formatTime(p.fastestLapTime)}
-                </td>
-                <td className="col-pit" style={{ 
-                  color: p.state === 'Racing' ? '#4CAF50' : 
-                         p.state.includes('Pit') ? '#ff9800' : '#888'
-                }}>
-                  {p.state}
-                </td>
+      {/* Tableau timing - utilise le même style que LastRace */}
+      <div style={{ flex: '1', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+        <div className="pit-wall-table-container">
+          <table className="pit-wall-table">
+            <thead>
+              <tr>
+                <th className="col-pos">POS</th>
+                <th className="col-driver">DRIVER</th>
+                <th className="col-sector">S1</th>
+                <th className="col-sector">S2</th>
+                <th className="col-sector">S3</th>
+                <th className="col-time">LAST</th>
+                <th className="col-time">BEST</th>
+                <th className="col-class">STATUS</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedParticipants.map((p, index) => {
+                // Déterminer si la position a changé pour l'animation
+                const previousPos = previousPositions[p.participantId];
+                const currentPos = index + 1;
+                const positionChanged = previousPos && previousPos !== currentPos;
+
+                return (
+                  <tr 
+                    key={p.participantId}
+                    className={`${p.isPlayer ? 'player-row' : ''} ${positionChanged ? 'position-changed' : ''}`}
+                    style={{
+                      transition: 'all 0.5s ease-out'
+                    }}
+                  >
+                    <td className="col-pos">
+                      <div className="position-badge" style={{ backgroundColor: p.isPlayer ? '#00ff00' : '#666' }}>
+                        {index + 1}
+                      </div>
+                    </td>
+                    <td className="col-driver">
+                      <div className="driver-info">
+                        {p.isPlayer && <span className="player-icon">👤</span>}
+                        <span className="driver-name">{p.name}</span>
+                      </div>
+                    </td>
+                    <td className="col-sector">{formatSector(p.sector1Time)}</td>
+                    <td className="col-sector">{formatSector(p.sector2Time)}</td>
+                    <td className="col-sector">{formatSector(p.sector3Time)}</td>
+                    <td className="col-time">{formatTime(p.lastLapTime)}</td>
+                    <td className={`col-time ${
+                      p.fastestLapTime === globalBest ? 'time-purple' : 
+                      (p.fastestLapTime > 0 ? 'time-green' : '')
+                    }`}>
+                      {formatTime(p.fastestLapTime)}
+                    </td>
+                    <td className="col-class">
+                      <span className={`class-badge ${p.state === 'Racing' ? 'racing' : ''}`}>
+                        {p.state || 'N/A'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
