@@ -69,20 +69,41 @@ function PitWall() {
       const data = await response.json();
       
       // Sauvegarder les informations de session
-      setSessionInfo({
+      const newSessionInfo = {
         sessionState: data.sessionState || null,
         sessionStage: data.sessionStage || null,
         trackTemp: data.trackTemp || null,
         airTemp: data.airTemp || null,
         trackName: data.trackName || null
-      });
+      };
+      setSessionInfo(newSessionInfo);
       
       // S'assurer que participants est toujours un tableau
       const participantsArray = Array.isArray(data.participants) ? data.participants : [];
       
-      // Sauvegarder les positions précédentes pour l'animation
+      // Trier AVANT de calculer les positions précédentes
+      const isQualifying = newSessionInfo.sessionStage?.toLowerCase()?.includes('qualif') || false;
+      
+      let sortedArray;
+      if (isQualifying) {
+        sortedArray = [...participantsArray].sort((a, b) => {
+          if (!a || !b) return 0;
+          if (a.fastestLapTime === 0) return 1;
+          if (b.fastestLapTime === 0) return -1;
+          return a.fastestLapTime - b.fastestLapTime;
+        });
+      } else {
+        sortedArray = [...participantsArray].sort((a, b) => {
+          if (!a || !b) return 0;
+          if (a.racePosition === 0) return 1;
+          if (b.racePosition === 0) return -1;
+          return a.racePosition - b.racePosition;
+        });
+      }
+      
+      // Sauvegarder les positions du tableau TRIÉ pour l'animation
       const newPositions = {};
-      participantsArray.forEach((p, index) => {
+      sortedArray.forEach((p, index) => {
         if (p && p.participantId) {
           newPositions[p.participantId] = index + 1;
         }
@@ -559,7 +580,7 @@ function PitWall() {
 
                   return (
                     <tr 
-                      key={p.participantId || index}
+                      key={`participant-${p.participantId}`}
                       className={`${p.isPlayer ? 'player-row' : ''} ${positionChanged ? 'position-changed' : ''}`}
                       style={{ transition: 'all 0.5s ease-out' }}
                     >
