@@ -1,169 +1,192 @@
 /**
  * Scraper pour la page /status du serveur dédié AMS2
- * Extrait les positions en temps réel des participants
- * Parse HTML avec regex (pas de dépendance cheerio pour pkg)
+ * Version FINALE avec positions X/Y/Z pour le canvas
  */
 
 const http = require('http');
+const { getTrackName } = require('../constants/tracks');
 
-/**
- * Parse la page HTML du serveur AMS2 avec regex
- * @param {string} html - HTML de la page /status
- * @returns {Object} - {participants: [...], trackId: number}
- */
 function parseStatusPage(html) {
   const participants = [];
   let trackId = null;
+  let sessionState = null;
+  let sessionStage = null;
+  let trackTemp = null;
+  let airTemp = null;
+  let trackName = null;
 
-  // MÉTHODE 1: Chercher "TrackId" dans Session Attributes
-  let trackIdMatch = html.match(/>TrackId<\/th>\s*<\/tr>\s*<tr>\s*<td[^>]*>(-?\d+)<\/td>/i);
+  // Parser les tables pour les données de session
+  const tableMatches = html.match(/<table class="simple">[\s\S]*?<\/table>/gi);
   
-  if (trackIdMatch) {
-    trackId = parseInt(trackIdMatch[1]);
-  } else {
-    // MÉTHODE 2: Chercher directement après "TrackId" sans contrainte de structure
-    trackIdMatch = html.match(/TrackId<\/th>[\s\S]*?<td[^>]*>(-?\d+)<\/td>/i);
-    
-    if (trackIdMatch) {
-      trackId = parseInt(trackIdMatch[1]);
-    } else {
-      // MÉTHODE 3: Chercher n'importe quel chiffre après "TrackId"
-      trackIdMatch = html.match(/TrackId[\s\S]{0,200}>(-?\d+)</i);
+  if (tableMatches) {
+    tableMatches.forEach(tableHtml => {
+      const rows = tableHtml.match(/<tr>[\s\S]*?<\/tr>/gi);
       
-      if (trackIdMatch) {
-        trackId = parseInt(trackIdMatch[1]);
-      } else {
-        console.error('Impossible de trouver le Track ID dans le HTML');
+      if (!rows) return;
+      
+      // Parcourir TOUTES les lignes pour trouver des headers
+      for (let i = 0; i < rows.length - 1; i++) {
+        const currentRow = rows[i];
+        
+        if (!currentRow.includes('<th')) continue;
+        
+        const headers = [];
+        const headerMatches = currentRow.match(/<th[^>]*>[\s\S]*?<\/th>/gi);
+        
+        if (!headerMatches) continue;
+        
+        headerMatches.forEach(th => {
+          const textMatch = th.match(/>([^<]+)<\/th>/);
+          if (textMatch) {
+            headers.push(textMatch[1].trim());
+          }
+        });
+        
+        const nextRow = rows[i + 1];
+        if (!nextRow || !nextRow.includes('<td')) continue;
+        
+        const cells = [];
+        const cellMatches = nextRow.match(/<td[^>]*>[\s\S]*?<\/td>/gi);
+        
+        if (!cellMatches) continue;
+        
+        cellMatches.forEach(td => {
+          const textMatch = td.match(/>([^<]*)<\/td>/);
+          cells.push(textMatch ? textMatch[1].trim() : '');
+        });
+        
+        // Mapper headers -> values
+        headers.forEach((header, index) => {
+          const value = cells[index];
+          if (!value || value === '') return;
+          
+          switch (header) {
+            case 'TrackId':
+              trackId = parseInt(value);
+              break;
+            case 'SessionState':
+              sessionState = value;
+              break;
+            case 'SessionStage':
+              sessionStage = value;
+              break;
+            case 'TemperatureTrack':
+              trackTemp = (parseInt(value) / 1000).toFixed(1);
+              break;
+            case 'TemperatureAmbient':
+              airTemp = (parseInt(value) / 1000).toFixed(1);
+              break;
+          }
+        });
       }
+    });
+  }
+
+  // Récupérer le nom du circuit
+  if (trackId) {
+    trackName = getTrackName(trackId);
+    if (trackName.includes('Circuit inconnu')) {
+      trackName = null;
     }
   }
 
-  // Trouver la section "Session Participants"
+  // Parser les participants avec positions X/Y/Z
   const participantsMatch = html.match(/<h3>Session Participants<\/h3>\s*<table class="simple">([\s\S]*?)<\/table>/);
   
-  if (!participantsMatch) {
-    console.error('Section Session Participants non trouvée');
-    return { participants: [], trackId };
-  }
+  if (participantsMatch) {
+    const tableContent = participantsMatch[1];
+    const rowRegex = /<tr>(.*?)<\/tr>/gs;
+    let rowMatch;
 
-  const tableContent = participantsMatch[1];
+    while ((rowMatch = rowRegex.exec(tableContent)) !== null) {
+      const rowHtml = rowMatch[1];
+      if (rowHtml.includes('<th')) continue;
 
-  // Extraire toutes les lignes <tr>
-  const rowRegex = /<tr>(.*?)<\/tr>/gs;
-  let rowMatch;
+      const cells = [];
+      const cellRegex = /<td[^>]*>(.*?)<\/td>/gs;
+      let cellMatch;
 
-  while ((rowMatch = rowRegex.exec(tableContent)) !== null) {
-    const rowHtml = rowMatch[1];
+      while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
+        let content = cellMatch[1];
+        content = content.replace(/<a[^>]*>(.*?)<\/a>/g, '$1');
+        content = content.replace(/<[^>]+>/g, '');
+        content = content.trim();
+        cells.push(content);
+      }
 
-    // Ignorer les lignes de header (qui contiennent <th>)
-    if (rowHtml.includes('<th')) continue;
+      if (cells.length < 24) continue;
 
-    // Extraire toutes les cellules <td>
-    const cells = [];
-    const cellRegex = /<td[^>]*>(.*?)<\/td>/g;
-    let cellMatch;
+      // Colonnes du tableau (voir status.html)
+      // 0: ParticipantId, 1: RefId, 2: Name, 3: IsPlayer, 4: GridPosition
+      // 7: RacePosition, 8: CurrentLap, 9: CurrentSector
+      // 10: Sector1Time, 11: Sector2Time, 12: Sector3Time
+      // 13: LastLapTime, 14: FastestLapTime, 15: State
+      // 21: PositionX, 22: PositionY, 23: PositionZ (en millimètres)
 
-    while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
-      // Nettoyer le contenu (enlever les balises HTML internes comme <a>)
-      let content = cellMatch[1].replace(/<[^>]+>/g, '').trim();
-      cells.push(content);
+      participants.push({
+        participantId: parseInt(cells[0]) || 0,
+        refId: parseInt(cells[1]) || 0,
+        name: cells[2] || 'Unknown',
+        isPlayer: cells[3] === '1',
+        gridPosition: parseInt(cells[4]) || 0,
+        racePosition: parseInt(cells[7]) || 0,
+        currentLap: parseInt(cells[8]) || 0,
+        currentSector: parseInt(cells[9]) || 0,
+        sector1Time: parseInt(cells[10]) || 0,
+        sector2Time: parseInt(cells[11]) || 0,
+        sector3Time: parseInt(cells[12]) || 0,
+        lastLapTime: parseInt(cells[13]) || 0,
+        fastestLapTime: parseInt(cells[14]) || 0,
+        state: cells[15] || 'Unknown',
+        // Positions en millimètres (coordonnées monde)
+        positionX: parseInt(cells[21]) || 0,
+        positionY: parseInt(cells[22]) || 0,
+        positionZ: parseInt(cells[23]) || 0
+      });
     }
-
-    if (cells.length < 25) continue; // Pas assez de colonnes
-
-    const participant = {
-      participantId: cells[0] || '',
-      refId: cells[1] || '',
-      name: cells[2] || '',
-      isPlayer: cells[3] === '1',
-      gridPosition: parseInt(cells[4]) || 0,
-      vehicleId: parseInt(cells[5]) || 0,
-      liveryId: parseInt(cells[6]) || 0,
-      racePosition: parseInt(cells[7]) || 0,
-      currentLap: parseInt(cells[8]) || 0,
-      currentSector: parseInt(cells[9]) || 0,
-      sector1Time: parseInt(cells[10]) || 0,
-      sector2Time: parseInt(cells[11]) || 0,
-      sector3Time: parseInt(cells[12]) || 0,
-      lastLapTime: parseInt(cells[13]) || 0,
-      fastestLapTime: parseInt(cells[14]) || 0,
-      state: cells[15] || '',
-      headlightsOn: cells[16] !== '',
-      wipersLevel: parseInt(cells[17]) || 0,
-      speed: parseInt(cells[18]) || 0,
-      gear: parseInt(cells[19]) || 0,
-      rpm: parseInt(cells[20]) || 0,
-      positionX: parseInt(cells[21]) || 0,
-      positionY: parseInt(cells[22]) || 0,
-      positionZ: parseInt(cells[23]) || 0,
-      orientation: parseInt(cells[24]) || 0
-    };
-
-    participants.push(participant);
   }
 
-  return { participants, trackId };
+  return { 
+    participants, 
+    trackId, 
+    sessionState, 
+    sessionStage, 
+    trackTemp, 
+    airTemp,
+    trackName 
+  };
 }
 
-/**
- * Fetch la page status avec http natif
- * @param {string} serverUrl - URL du serveur (ex: http://192.168.1.69:9000)
- * @returns {Promise<string>} - HTML de la page
- */
-function fetchStatusHtml(serverUrl) {
+async function fetchLivePositions(serverUrl) {
   return new Promise((resolve, reject) => {
-    // Parser l'URL
-    const url = new URL(serverUrl);
+    const url = `${serverUrl}/status`;
     
-    const options = {
-      hostname: url.hostname,
-      port: url.port || 80,
-      path: '/status',
-      method: 'GET',
-      timeout: 5000
-    };
+    http.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}`));
+        return;
+      }
 
-    const req = http.request(options, (res) => {
-      let data = '';
-
+      let html = '';
       res.on('data', (chunk) => {
-        data += chunk;
+        html += chunk.toString();
       });
 
       res.on('end', () => {
-        resolve(data);
+        try {
+          const data = parseStatusPage(html);
+          resolve(data);
+        } catch (err) {
+          reject(err);
+        }
       });
-    });
-
-    req.on('error', (err) => {
+    }).on('error', (err) => {
       reject(err);
     });
-
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-
-    req.end();
   });
 }
 
-/**
- * Fetch et parse la page status
- * @param {string} serverUrl - URL du serveur (ex: http://192.168.1.69:9000)
- * @returns {Promise<Object>} - {participants: [...], trackId: number}
- */
-async function fetchLivePositions(serverUrl) {
-  try {
-    const html = await fetchStatusHtml(serverUrl);
-    return parseStatusPage(html);
-  } catch (err) {
-    console.error('Erreur fetch status:', err.message);
-    return { participants: [], trackId: null };
-  }
-}
-
 module.exports = {
-  parseStatusPage,
-  fetchLivePositions
+  fetchLivePositions,
+  parseStatusPage
 };

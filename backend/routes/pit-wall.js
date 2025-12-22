@@ -1,50 +1,43 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const router = express.Router();
-const { getTrackName } = require('../constants/tracks');
-const { getVehicleInfo } = require('../constants/vehicles');
+const fs = require('fs');
 const { fetchLivePositions } = require('../services/ams2-status-scraper');
 
-// Détecter quel type de DB on utilise et wrapper pour query
-async function queryOne(sql, params = []) {
+// Importer la liste des véhicules
+const { getVehicleInfo } = require('../constants/vehicles');
+
+// Helper pour récupérer le chemin du fichier SMS stats
+async function getSmsStatsPath() {
   try {
     const { getDb } = require('../database');
     const db = getDb();
+    const result = db.exec('SELECT value FROM settings WHERE key = ?', ['sms_stats_path']);
     
-    // Si c'est sql.js
-    if (db && typeof db.prepare === 'function') {
-      const stmt = db.prepare(sql);
-      stmt.bind(params);
-      
-      let result = null;
-      if (stmt.step()) {
-        result = stmt.getAsObject();
-      }
-      stmt.free();
-      return result;
+    if (!result || !result[0] || !result[0].values || !result[0].values.length) {
+      return null;
     }
-  } catch (err) {
-    // Si erreur, utiliser sqlite3
-    const db = require('../database');
-    return new Promise((resolve, reject) => {
-      db.get(sql, params, (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
-  }
-}
-
-// Fonction pour obtenir le chemin du fichier depuis la BDD
-async function getSmsStatsPath() {
-  try {
-    const setting = await queryOne('SELECT value FROM settings WHERE key = ?', ['sms_stats_path']);
-    return setting ? setting.value : null;
+    
+    return result[0].values[0][0];
   } catch (err) {
     console.error('Erreur lecture chemin SMS:', err);
     return null;
   }
+}
+
+// Helper pour formater les temps
+function formatTime(ms) {
+  if (!ms || ms === 0) return '--:--:---';
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const milliseconds = ms % 1000;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+}
+
+function formatGap(ms, isLeader) {
+  if (isLeader) return '--';
+  if (!ms || ms === 0) return '--';
+  return `+${(ms / 1000).toFixed(3)}`;
 }
 
 // Parser le fichier JSON AMS2
@@ -95,58 +88,10 @@ function parseRaceData(jsonData) {
     resultsArray.forEach(r => {
       if (r.attributes.FastestLapTime > 0 && r.attributes.FastestLapTime < bestLapTime) {
         bestLapTime = r.attributes.FastestLapTime;
-        fastestDriver = r.name || 'Unknown';  // FIX: Protection contre undefined
+        fastestDriver = r.name || 'Unknown';
       }
     });
 
-    // Construire les données du tableau en combinant participants ET résultats
-    const drivers = [];
-    
-    // D'abord, ajouter tous les participants avec résultats
-    resultsArray
-      .filter(r => r.attributes.State === 'Finished' || r.attributes.State === 'Racing')
-      .forEach((result) => {
-        const participant = participantsArray.find(p => p.refid === result.refid);
-        drivers.push(createDriverEntry(result, participant, bestLapTime));
-      });
-    
-    // Ensuite, ajouter les participants SANS résultats (DNS, DNF, etc.)
-    participantsArray.forEach(p => {
-      const hasResult = resultsArray.some(r => r.refid === p.refid);
-      if (!hasResult) {
-        // Créer un résultat fictif pour ce participant
-        const fakeResult = {
-          name: p.name || p.Name || 'Unknown',  // FIX: Protection contre undefined
-          refid: p.refid,
-          is_player: p.is_player,
-          participantid: Object.keys(participants).find(key => participants[key].RefId === p.refid),
-          attributes: {
-            State: 'DNS',  // Did Not Start
-            RacePosition: 999,
-            FastestLapTime: 0,
-            LapsCompleted: 0,
-            TotalTime: 0,
-            CurrentLap: 0,
-            CurrentSector: 0,
-            CurrentSector1Time: 0,
-            CurrentSector2Time: 0,
-            CurrentSector3Time: 0,
-            VehicleId: p.vehicle_id || 0
-          }
-        };
-        drivers.push(createDriverEntry(fakeResult, p, bestLapTime));
-      }
-    });
-    
-    // Trier par position
-    drivers.sort((a, b) => {
-      const posA = parseInt(a.pos);
-      const posB = parseInt(b.pos);
-      if (posA === 999) return 1;  // DNS à la fin
-      if (posB === 999) return -1;
-      return posA - posB;
-    });
-    
     // Fonction helper pour créer une entrée driver
     function createDriverEntry(result, participant, bestLapTime) {
       const attrs = result.attributes;
@@ -178,46 +123,86 @@ function parseRaceData(jsonData) {
 
       return {
         pos: attrs.RacePosition,
-        name: (result?.name || 'Unknown').replace(' (AI)', ''),  // FIX: Protection contre undefined
+        name: (result?.name || 'Unknown').replace(' (AI)', ''),
         vehicle: vehicleInfo?.name || 'Unknown',
         class: vehicleInfo?.class || 'Unknown',
         pitInfo: '0 (0L)', // TODO: Calculer les arrêts
         lap: `L${attrs.Lap || 0}`,
         gap: formatGap(gap, attrs.RacePosition === 1),
-        interval: attrs.RacePosition === 1 ? '+0.00' : formatInterval(gap),
+        interval: attrs.RacePosition === 1 ? '--' : formatGap(gap, false),
         bestLap: formatTime(attrs.FastestLapTime),
         lastLap: formatTime(lastLapTime),
-        s1: formatSectorTime(s1),
-        s2: formatSectorTime(s2),
-        s3: formatSectorTime(s3),
-        isPlayer: result.is_player === true,
-        participantId: result.participantid,
-        // Données brutes pour calculs de couleurs
-        bestLapRaw: attrs.FastestLapTime,
-        lastLapRaw: lastLapTime,
-        s1Raw: s1,
-        s2Raw: s2,
-        s3Raw: s3
+        s1: formatTime(s1),
+        s2: formatTime(s2),
+        s3: formatTime(s3),
+        isPlayer: participant?.is_player === 1 || false,
+        isBestLap: attrs.FastestLapTime === bestLapTime,
+        participantId: result.participantid
       };
     }
 
-    // Calculer le tour actuel (moyenne des laps)
-    const avgLap = Math.round(drivers.reduce((sum, d) => sum + parseInt(d.lap.substring(1)), 0) / drivers.length);
+    // Construire les données du tableau en combinant participants ET résultats
+    const drivers = [];
+    
+    // D'abord, ajouter tous les participants avec résultats
+    resultsArray
+      .filter(r => r.attributes.State === 'Finished' || r.attributes.State === 'Racing')
+      .forEach((result) => {
+        const participant = participantsArray.find(p => p.refid === result.refid);
+        drivers.push(createDriverEntry(result, participant, bestLapTime));
+      });
+    
+    // Ensuite, ajouter les participants SANS résultats (DNS, DNF, etc.)
+    participantsArray.forEach(p => {
+      const hasResult = resultsArray.some(r => r.refid === p.refid);
+      if (!hasResult) {
+        // Créer un résultat fictif pour ce participant
+        const fakeResult = {
+          name: p.name || p.Name || 'Unknown',
+          refid: p.refid,
+          is_player: p.is_player,
+          participantid: Object.keys(participants).find(key => participants[key].RefId === p.refid),
+          attributes: {
+            State: 'DNS',
+            RacePosition: 999,
+            FastestLapTime: 0,
+            LapsCompleted: 0,
+            TotalTime: 0,
+            CurrentLap: 0,
+            Lap: 0,
+            CurrentSector: 0,
+            CurrentSector1Time: 0,
+            CurrentSector2Time: 0,
+            CurrentSector3Time: 0,
+            VehicleId: p.vehicle_id || 0
+          }
+        };
+        drivers.push(createDriverEntry(fakeResult, p, bestLapTime));
+      }
+    });
+    
+    // Trier par position
+    drivers.sort((a, b) => {
+      const posA = parseInt(a.pos);
+      const posB = parseInt(b.pos);
+      if (posA === 999) return 1;  // DNS à la fin
+      if (posB === 999) return -1;
+      return posA - posB;
+    });
+
+    // Info de course
+    const trackInfo = getVehicleInfo(setup.TrackId);
     
     return {
       raceInfo: {
-        track: getTrackName(setup.TrackId),
-        currentLap: avgLap,
-        totalLaps: setup.RaceLength,
-        startTime: formatStartTime(lastRace.start_time),
-        classLeader: 'GT3',
-        bestLap: formatTime(bestLapTime),
-        fastestDriver: (fastestDriver || 'Unknown').replace(' (AI)', ''),  // FIX: Protection contre undefined
-        isFinished: lastRace.finished === true,
-        raceIndex: lastRace.index
+        track: trackInfo?.name || 'Unknown Track',
+        currentLap: raceSession.current_lap || 0,
+        totalLaps: setup.RaceLength || 0,
+        startTime: new Date(lastRace.start_time * 1000).toLocaleTimeString('fr-FR'),
+        bestLap: formatTime(bestLapTime === Infinity ? 0 : bestLapTime),
+        fastestDriver: fastestDriver
       },
-      drivers,
-      fullRaceData: lastRace  // Pour la sauvegarde en historique
+      drivers: drivers
     };
     
   } catch (error) {
@@ -226,61 +211,22 @@ function parseRaceData(jsonData) {
   }
 }
 
-// Formater le temps (ms -> m:ss.SSS)
-function formatTime(ms) {
-  if (!ms || ms === 0 || !isFinite(ms)) return '0:00.000';
-  const minutes = Math.floor(ms / 60000);
-  const seconds = Math.floor((ms % 60000) / 1000);
-  const millis = ms % 1000;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
-}
-
-// Formater secteur (ms -> ss.SSS)
-function formatSectorTime(ms) {
-  if (!ms || ms === 0) return '---.---';
-  const seconds = Math.floor(ms / 1000);
-  const millis = ms % 1000;
-  return `${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
-}
-
-// Formater l'écart
-function formatGap(gapMs, isLeader) {
-  if (isLeader) return '+0.000';
-  const seconds = (gapMs / 1000).toFixed(3);
-  return `+${seconds}`;
-}
-
-// Formater l'intervalle
-function formatInterval(gapMs) {
-  const seconds = (gapMs / 1000).toFixed(3);
-  return `+${seconds}`;
-}
-
-// Formater l'heure de départ
-function formatStartTime(startTime) {
-  const date = new Date(startTime * 1000);
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${hours}:${minutes}`;
-}
-
-// Route GET pour les données live
+// Route GET pour les données de course en direct
 router.get('/live-data', async (req, res) => {
   try {
-    // Récupérer le chemin depuis la BDD
     const SMS_STATS_FILE = await getSmsStatsPath();
     
     if (!SMS_STATS_FILE) {
       return res.status(404).json({ 
-        error: 'Chemin du fichier non configuré',
-        message: 'Veuillez configurer le chemin dans les Paramètres'
+        error: 'Chemin du fichier SMS Stats non configuré',
+        message: 'Configurez le chemin dans les Paramètres'
       });
     }
-    
-    // Vérifier si le fichier existe
+
+    // Vérifier que le fichier existe
     if (!fs.existsSync(SMS_STATS_FILE)) {
       return res.status(404).json({ 
-        error: 'Fichier sms_stats_data.json non trouvé',
+        error: 'Fichier SMS Stats non trouvé',
         path: SMS_STATS_FILE,
         message: 'Vérifiez le chemin dans les Paramètres'
       });
@@ -403,6 +349,11 @@ router.get('/live-positions', async (req, res) => {
       success: true,
       participants: data.participants || [],
       trackId: data.trackId || null,
+      sessionState: data.sessionState || 'Unknown',
+      sessionStage: data.sessionStage || 'Unknown',
+      trackTemp: data.trackTemp || null,
+      airTemp: data.airTemp || null,
+      trackName: data.trackName || null,
       timestamp: Date.now()
     });
     

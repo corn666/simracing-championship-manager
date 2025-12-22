@@ -6,6 +6,7 @@ function PitWall() {
   const [trackMap, setTrackMap] = useState(null);
   const [currentTrackId, setCurrentTrackId] = useState(null);
   const [participants, setParticipants] = useState([]);
+  const [sessionInfo, setSessionInfo] = useState(null);
   const [previousPositions, setPreviousPositions] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -15,7 +16,7 @@ function PitWall() {
 
   // Polling des positions toutes les 250ms
   useEffect(() => {
-    fetchLivePositions(); // Premier appel immédiat
+    fetchLivePositions();
     
     const interval = setInterval(() => {
       fetchLivePositions();
@@ -36,16 +37,24 @@ function PitWall() {
       const response = await fetch(`${API_BASE_URL}/api/trackmaps/${trackId}`);
       
       if (!response.ok) {
-        const errorMsg = `Tracé non disponible pour le circuit ${trackId}`;
-        setTrackMapError(errorMsg);
+        setTrackMapError(`Tracé non disponible pour ce circuit`);
+        setTrackMap(null);
         return;
       }
       
       const data = await response.json();
-      setTrackMap(data);
-      setTrackMapError(null);
+      
+      // Vérifier que line_mid existe
+      if (data && data.line_mid && Array.isArray(data.line_mid) && data.line_mid.length > 0) {
+        setTrackMap(data);
+        setTrackMapError(null);
+      } else {
+        setTrackMapError('Format de tracé invalide');
+        setTrackMap(null);
+      }
     } catch (err) {
       setTrackMapError(err.message);
+      setTrackMap(null);
     }
   };
 
@@ -59,16 +68,30 @@ function PitWall() {
       
       const data = await response.json();
       
+      // Sauvegarder les informations de session
+      setSessionInfo({
+        sessionState: data.sessionState || null,
+        sessionStage: data.sessionStage || null,
+        trackTemp: data.trackTemp || null,
+        airTemp: data.airTemp || null,
+        trackName: data.trackName || null
+      });
+      
+      // S'assurer que participants est toujours un tableau
+      const participantsArray = Array.isArray(data.participants) ? data.participants : [];
+      
       // Sauvegarder les positions précédentes pour l'animation
       const newPositions = {};
-      data.participants.forEach((p, index) => {
-        newPositions[p.participantId] = index + 1;
+      participantsArray.forEach((p, index) => {
+        if (p && p.participantId) {
+          newPositions[p.participantId] = index + 1;
+        }
       });
       setPreviousPositions(newPositions);
       
-      setParticipants(data.participants || []);
+      setParticipants(participantsArray);
       
-      // Charger le circuit si trackId change (première fois ou changement)
+      // Charger le circuit si trackId change
       if (data.trackId && data.trackId !== currentTrackId) {
         setCurrentTrackId(data.trackId);
       }
@@ -101,13 +124,13 @@ function PitWall() {
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-    // Si pas de trackMap, afficher un message
-    if (!trackMap) {
+    // Vérifier si trackMap et line_mid existent
+    if (!trackMap || !trackMap.line_mid || !Array.isArray(trackMap.line_mid) || trackMap.line_mid.length === 0) {
       ctx.fillStyle = '#666';
       ctx.font = '16px Arial';
       ctx.textAlign = 'center';
       ctx.fillText(
-        trackMapError || 'Chargement du circuit...', 
+        trackMapError || 'Tracé du circuit non disponible', 
         canvasWidth / 2, 
         canvasHeight / 2
       );
@@ -116,40 +139,32 @@ function PitWall() {
 
     const coordinates = trackMap.line_mid;
 
-    if (!coordinates || coordinates.length === 0) {
-      ctx.fillStyle = '#666';
-      ctx.font = '16px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText('Aucune donnée de tracé disponible', canvasWidth / 2, canvasHeight / 2);
-      return;
-    }
-
     // Calculer les bounds
     let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
 
-    coordinates.forEach(([x, y]) => {
+    coordinates.forEach(([x, z]) => {
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
     });
 
     const trackWidth = maxX - minX;
-    const trackHeight = maxY - minY;
+    const trackHeight = maxZ - minZ;
 
     const padding = 30;
     const scaleX = (canvasWidth - padding * 2) / trackWidth;
-    const scaleY = (canvasHeight - padding * 2) / trackHeight;
-    const scale = Math.min(scaleX, scaleY);
+    const scaleZ = (canvasHeight - padding * 2) / trackHeight;
+    const scale = Math.min(scaleX, scaleZ);
 
     const offsetX = padding + (canvasWidth - padding * 2 - trackWidth * scale) / 2;
-    const offsetY = padding + (canvasHeight - padding * 2 - trackHeight * scale) / 2;
+    const offsetZ = padding + (canvasHeight - padding * 2 - trackHeight * scale) / 2;
 
     // Fonction pour transformer coordonnées circuit -> canvas
-    const toCanvasCoords = (x, y) => ({
+    const toCanvasCoords = (x, z) => ({
       x: offsetX + (x - minX) * scale,
-      y: offsetY + (maxY - y) * scale // Inverser Y
+      y: offsetZ + (maxZ - z) * scale // Inverser Z pour Y canvas
     });
 
     // Dessiner le circuit
@@ -159,8 +174,8 @@ function PitWall() {
     ctx.lineJoin = 'round';
 
     ctx.beginPath();
-    coordinates.forEach(([x, y], index) => {
-      const canvasPos = toCanvasCoords(x, y);
+    coordinates.forEach(([x, z], index) => {
+      const canvasPos = toCanvasCoords(x, z);
       if (index === 0) {
         ctx.moveTo(canvasPos.x, canvasPos.y);
       } else {
@@ -169,21 +184,19 @@ function PitWall() {
     });
     ctx.stroke();
 
-    // Ligne Start/Finish (perpendiculaire au circuit)
-    const [startX, startY] = coordinates[0];
-    const [nextX, nextY] = coordinates[1];
-    const startPos = toCanvasCoords(startX, startY);
+    // Ligne Start/Finish
+    const [startX, startZ] = coordinates[0];
+    const [nextX, nextZ] = coordinates[1];
+    const startPos = toCanvasCoords(startX, startZ);
     
-    // Calculer la direction du circuit
+    // Calculer la direction perpendiculaire
     const dx = nextX - startX;
-    const dy = nextY - startY;
-    const length = Math.sqrt(dx * dx + dy * dy);
+    const dz = nextZ - startZ;
+    const length = Math.sqrt(dx * dx + dz * dz);
     
-    // Vecteur perpendiculaire (tourné de 90°)
-    const perpX = -dy / length;
-    const perpY = dx / length;
+    const perpX = -dz / length;
+    const perpZ = dx / length;
     
-    // Longueur de la ligne S/F en pixels
     const sfLineLength = 20;
     
     ctx.strokeStyle = '#ff0000';
@@ -191,143 +204,254 @@ function PitWall() {
     ctx.beginPath();
     ctx.moveTo(
       startPos.x + perpX * sfLineLength * scale / 1000,
-      startPos.y - perpY * sfLineLength * scale / 1000
+      startPos.y - perpZ * sfLineLength * scale / 1000
     );
     ctx.lineTo(
       startPos.x - perpX * sfLineLength * scale / 1000,
-      startPos.y + perpY * sfLineLength * scale / 1000
+      startPos.y + perpZ * sfLineLength * scale / 1000
     );
     ctx.stroke();
 
-    // Dessiner les participants
-    participants.forEach(p => {
-      // Utiliser X et Z (pas Y qui est la hauteur)
-      if (p.positionX === 0 && p.positionZ === 0) return; // Pas de position
-
-      const pos = toCanvasCoords(p.positionX, p.positionZ);
-
-      // Couleur : vert pour joueurs, blanc pour IA
-      const color = p.isPlayer ? '#00ff00' : '#ffffff';
-
-      // Point pour la voiture
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 5, 0, 2 * Math.PI);
-      ctx.fill();
-
-      // Contour noir pour mieux voir
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Afficher le nom si survolé
-      if (hoveredParticipant && hoveredParticipant.name === p.name) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-        const textWidth = ctx.measureText(p.name).width;
-        ctx.fillRect(pos.x + 10, pos.y - 18, textWidth + 10, 18);
+    // Dessiner les participants avec leurs vraies positions
+    if (Array.isArray(participants) && participants.length > 0) {
+      participants.forEach(p => {
+        if (!p) return;
         
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 11px Arial';
-        ctx.fillText(p.name, pos.x + 15, pos.y - 6);
-      }
-    });
+        // Vérifier si le participant a des coordonnées valides
+        if (!p.positionX || !p.positionZ || (p.positionX === 0 && p.positionZ === 0)) {
+          return; // Pas de position valide
+        }
+
+        const pos = toCanvasCoords(p.positionX, p.positionZ);
+
+        // Couleur selon le type
+        const color = p.isPlayer ? '#00ff00' : '#ffffff';
+
+        // Dessiner le point
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // Contour noir
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Afficher le nom si survolé
+        if (hoveredParticipant && hoveredParticipant === p.participantId) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+          ctx.font = 'bold 11px Arial';
+          const textWidth = ctx.measureText(p.name).width;
+          ctx.fillRect(pos.x + 10, pos.y - 18, textWidth + 10, 18);
+          
+          ctx.fillStyle = '#fff';
+          ctx.fillText(p.name, pos.x + 15, pos.y - 6);
+        }
+      });
+    }
   };
 
   const handleCanvasMouseMove = (e) => {
-    if (!canvasRef.current || !trackMap || participants.length === 0) return;
+    if (!canvasRef.current || !trackMap || !trackMap.line_mid || participants.length === 0) return;
 
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
 
-    // Recalculer les bounds
     const coordinates = trackMap.line_mid;
     let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
 
-    coordinates.forEach(([x, y]) => {
+    coordinates.forEach(([x, z]) => {
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
     });
 
     const trackWidth = maxX - minX;
-    const trackHeight = maxY - minY;
+    const trackHeight = maxZ - minZ;
     const padding = 30;
     const scaleX = (canvas.width - padding * 2) / trackWidth;
-    const scaleY = (canvas.height - padding * 2) / trackHeight;
-    const scale = Math.min(scaleX, scaleY);
+    const scaleZ = (canvas.height - padding * 2) / trackHeight;
+    const scale = Math.min(scaleX, scaleZ);
     const offsetX = padding + (canvas.width - padding * 2 - trackWidth * scale) / 2;
-    const offsetY = padding + (canvas.height - padding * 2 - trackHeight * scale) / 2;
+    const offsetZ = padding + (canvas.height - padding * 2 - trackHeight * scale) / 2;
 
-    const toCanvasCoords = (x, y) => ({
+    const toCanvasCoords = (x, z) => ({
       x: offsetX + (x - minX) * scale,
-      y: offsetY + (maxY - y) * scale
+      y: offsetZ + (maxZ - z) * scale
     });
 
     // Trouver le participant le plus proche de la souris
-    let closest = null;
-    let minDist = 15;
+    let closestParticipant = null;
+    let closestDistance = Infinity;
 
     participants.forEach(p => {
-      if (p.positionX === 0 && p.positionZ === 0) return;
+      if (!p.positionX || !p.positionZ) return;
       
       const pos = toCanvasCoords(p.positionX, p.positionZ);
-      const dist = Math.sqrt((pos.x - mouseX) ** 2 + (pos.y - mouseY) ** 2);
+      const distance = Math.sqrt(
+        Math.pow(pos.x - mouseX, 2) + Math.pow(pos.y - mouseY, 2)
+      );
 
-      if (dist < minDist) {
-        minDist = dist;
-        closest = p;
+      if (distance < 15 && distance < closestDistance) {
+        closestDistance = distance;
+        closestParticipant = p.participantId;
       }
     });
 
-    setHoveredParticipant(closest);
+    setHoveredParticipant(closestParticipant);
   };
 
   const formatTime = (ms) => {
-    if (!ms || ms === 0) return '-';
+    if (!ms || ms === 0) return '--:--:---';
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    const millis = ms % 1000;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+    const milliseconds = ms % 1000;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
   };
 
   const formatSector = (ms) => {
-    if (!ms || ms === 0) return '---.---';
+    if (!ms || ms === 0) return '--:--';
     const seconds = Math.floor(ms / 1000);
-    const millis = ms % 1000;
-    return `${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+    const milliseconds = ms % 1000;
+    return `${seconds}.${milliseconds.toString().padStart(3, '0')}`;
   };
 
-  if (loading) {
+  const formatGap = (currentParticipant, index, sortedParticipants) => {
+    if (index === 0) return '--';
+    
+    const leader = sortedParticipants[0];
+    if (!leader || !currentParticipant) return '--';
+    
+    // Si tours différents
+    if (currentParticipant.currentLap < leader.currentLap) {
+      const lapDiff = leader.currentLap - currentParticipant.currentLap;
+      return `+${lapDiff} LAP${lapDiff > 1 ? 'S' : ''}`;
+    }
+    
+    // Si même tour
+    if (currentParticipant.fastestLapTime > 0 && leader.fastestLapTime > 0) {
+      const gap = currentParticipant.fastestLapTime - leader.fastestLapTime;
+      return `+${(gap / 1000).toFixed(3)}`;
+    }
+    
+    return '--';
+  };
+
+  const getSortedParticipants = () => {
+    if (!participants || !Array.isArray(participants) || participants.length === 0) {
+      return [];
+    }
+    
+    const isQualifying = sessionInfo?.sessionStage?.toLowerCase()?.includes('qualif') || false;
+    
+    if (isQualifying) {
+      return [...participants].sort((a, b) => {
+        if (!a || !b) return 0;
+        if (a.fastestLapTime === 0) return 1;
+        if (b.fastestLapTime === 0) return -1;
+        return a.fastestLapTime - b.fastestLapTime;
+      });
+    } else {
+      return [...participants].sort((a, b) => {
+        if (!a || !b) return 0;
+        if (a.racePosition === 0) return 1;
+        if (b.racePosition === 0) return -1;
+        return a.racePosition - b.racePosition;
+      });
+    }
+  };
+
+  const getSessionType = () => {
+    if (!sessionInfo?.sessionStage) return 'Session';
+    
+    const stage = sessionInfo.sessionStage.toLowerCase();
+    if (stage.includes('qualif')) return 'QUALIFICATION';
+    if (stage.includes('race')) return 'RACE';
+    if (stage.includes('practice')) return 'PRACTICE';
+    if (stage.includes('warmup')) return 'WARM-UP';
+    
+    return sessionInfo.sessionStage.toUpperCase();
+  };
+
+  // Vérifier si la session est idle
+  const isIdle = !sessionInfo || 
+                 sessionInfo.sessionState?.toLowerCase() === 'idle' || 
+                 sessionInfo.sessionState?.toLowerCase() === 'none' ||
+                 sessionInfo.sessionState?.toLowerCase() === 'lobby';
+
+  // État de chargement
+  if (loading && !sessionInfo) {
     return (
-      <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#0a0a0a'}}>
-        <div style={{color: '#4CAF50', fontSize: '24px'}}>Chargement des données live...</div>
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        background: '#0a0a0a',
+        color: '#fff'
+      }}>
+        <div>
+          <div style={{ fontSize: '24px', marginBottom: '20px' }}>Loading...</div>
+          <div style={{ fontSize: '14px', color: '#666' }}>Connecting to AMS2 server...</div>
+        </div>
       </div>
     );
   }
 
-  if (error) {
+  // État "Waiting for race to start"
+  if (isIdle) {
     return (
-      <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#0a0a0a'}}>
-        <div style={{color: '#ff0000', fontSize: '18px'}}>⚠️ {error}</div>
+      <div style={{ 
+        display: 'flex', 
+        flexDirection: 'column',
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        background: '#0a0a0a',
+        color: '#fff',
+        textAlign: 'center'
+      }}>
+        <h1 style={{ 
+          fontSize: '48px', 
+          color: '#ff0000',
+          animation: 'pulse 2s infinite',
+          marginBottom: '30px'
+        }}>
+          WAITING FOR RACE TO START
+        </h1>
+        <div style={{
+          width: '80px',
+          height: '80px',
+          border: '8px solid #333',
+          borderTop: '8px solid #ff0000',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite',
+          margin: '0 auto'
+        }}></div>
+        <style>
+          {`
+            @keyframes pulse {
+              0%, 100% { opacity: 1; }
+              50% { opacity: 0.5; }
+            }
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}
+        </style>
       </div>
     );
   }
 
-  // Trier par meilleur temps (fastest lap) - meilleur temps en premier
-  const sortedParticipants = [...participants].sort((a, b) => {
-    // Si pas de temps, mettre à la fin
-    if (!a.fastestLapTime || a.fastestLapTime === 0) return 1;
-    if (!b.fastestLapTime || b.fastestLapTime === 0) return -1;
-    return a.fastestLapTime - b.fastestLapTime;
-  });
-
-  // Trouver le meilleur temps global
-  const globalBest = sortedParticipants.length > 0 && sortedParticipants[0].fastestLapTime 
+  const sortedParticipants = getSortedParticipants();
+  const globalBest = sortedParticipants.length > 0 && sortedParticipants[0]?.fastestLapTime > 0 
     ? sortedParticipants[0].fastestLapTime 
     : null;
 
@@ -340,8 +464,8 @@ function PitWall() {
       height: '100vh',
       overflow: 'hidden'
     }}>
-      {/* Canvas circuit - TOUJOURS affiché */}
-      <div style={{ flex: '0 0 40%' }}>
+      {/* Canvas circuit */}
+      <div style={{ flex: '0 0 40%', display: 'flex', flexDirection: 'column' }}>
         <canvas
           ref={canvasRef}
           width={1000}
@@ -357,13 +481,50 @@ function PitWall() {
             height: 'auto'
           }}
         />
-        {/* Info sous le canvas */}
-        <div style={{ color: '#666', fontSize: '12px', marginTop: '10px', textAlign: 'center' }}>
-          {currentTrackId ? `Circuit ID: ${currentTrackId}` : 'En attente du circuit...'}
+        
+        {/* Informations de session */}
+        <div style={{ 
+          marginTop: '20px', 
+          padding: '15px',
+          background: 'rgba(255, 255, 255, 0.05)',
+          border: '1px solid #333',
+          borderRadius: '8px'
+        }}>
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: '1fr 1fr', 
+            gap: '10px',
+            color: '#fff'
+          }}>
+            <div>
+              <div style={{ fontSize: '12px', color: '#888', marginBottom: '5px' }}>CIRCUIT</div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                {sessionInfo?.trackName || (currentTrackId ? `Circuit ID: ${currentTrackId}` : 'Unknown')}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: '#888', marginBottom: '5px' }}>SESSION</div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#ff0000' }}>
+                {getSessionType()}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: '#888', marginBottom: '5px' }}>TRACK TEMP</div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                {sessionInfo?.trackTemp ? `${sessionInfo.trackTemp}°C` : '--°C'}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: '#888', marginBottom: '5px' }}>AIR TEMP</div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                {sessionInfo?.airTemp ? `${sessionInfo.airTemp}°C` : '--°C'}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Tableau timing - utilise le même style que LastRace */}
+      {/* Tableau timing */}
       <div style={{ flex: '1', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
         <div className="pit-wall-table-container">
           <table className="pit-wall-table">
@@ -371,58 +532,73 @@ function PitWall() {
               <tr>
                 <th className="col-pos">POS</th>
                 <th className="col-driver">DRIVER</th>
+                <th className="col-lap">LAP</th>
                 <th className="col-sector">S1</th>
                 <th className="col-sector">S2</th>
                 <th className="col-sector">S3</th>
                 <th className="col-time">LAST</th>
                 <th className="col-time">BEST</th>
+                <th className="col-gap">GAP</th>
                 <th className="col-class">STATUS</th>
               </tr>
             </thead>
             <tbody>
-              {sortedParticipants.map((p, index) => {
-                // Déterminer si la position a changé pour l'animation
-                const previousPos = previousPositions[p.participantId];
-                const currentPos = index + 1;
-                const positionChanged = previousPos && previousPos !== currentPos;
+              {sortedParticipants.length === 0 ? (
+                <tr>
+                  <td colSpan="10" style={{ textAlign: 'center', padding: '20px', color: '#666' }}>
+                    No participants
+                  </td>
+                </tr>
+              ) : (
+                sortedParticipants.map((p, index) => {
+                  if (!p) return null;
+                  
+                  const previousPos = previousPositions[p.participantId];
+                  const currentPos = index + 1;
+                  const positionChanged = previousPos && previousPos !== currentPos;
 
-                return (
-                  <tr 
-                    key={p.participantId}
-                    className={`${p.isPlayer ? 'player-row' : ''} ${positionChanged ? 'position-changed' : ''}`}
-                    style={{
-                      transition: 'all 0.5s ease-out'
-                    }}
-                  >
-                    <td className="col-pos">
-                      <div className="position-badge" style={{ backgroundColor: p.isPlayer ? '#00ff00' : '#666' }}>
-                        {index + 1}
-                      </div>
-                    </td>
-                    <td className="col-driver">
-                      <div className="driver-info">
-                        {p.isPlayer && <span className="player-icon">👤</span>}
-                        <span className="driver-name">{p.name}</span>
-                      </div>
-                    </td>
-                    <td className="col-sector">{formatSector(p.sector1Time)}</td>
-                    <td className="col-sector">{formatSector(p.sector2Time)}</td>
-                    <td className="col-sector">{formatSector(p.sector3Time)}</td>
-                    <td className="col-time">{formatTime(p.lastLapTime)}</td>
-                    <td className={`col-time ${
-                      p.fastestLapTime === globalBest ? 'time-purple' : 
-                      (p.fastestLapTime > 0 ? 'time-green' : '')
-                    }`}>
-                      {formatTime(p.fastestLapTime)}
-                    </td>
-                    <td className="col-class">
-                      <span className={`class-badge ${p.state === 'Racing' ? 'racing' : ''}`}>
-                        {p.state || 'N/A'}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+                  return (
+                    <tr 
+                      key={p.participantId || index}
+                      className={`${p.isPlayer ? 'player-row' : ''} ${positionChanged ? 'position-changed' : ''}`}
+                      style={{ transition: 'all 0.5s ease-out' }}
+                    >
+                      <td className="col-pos">
+                        <div className="position-badge" style={{ backgroundColor: p.isPlayer ? '#00ff00' : '#666' }}>
+                          {index + 1}
+                        </div>
+                      </td>
+                      <td className="col-driver">
+                        <div className="driver-info">
+                          {p.isPlayer && <span className="player-icon">👤</span>}
+                          <span className="driver-name">{p.name || 'Unknown'}</span>
+                        </div>
+                      </td>
+                      <td className="col-lap" style={{ textAlign: 'center', color: '#888' }}>
+                        {p.currentLap || 0}
+                      </td>
+                      <td className="col-sector">{formatSector(p.sector1Time)}</td>
+                      <td className="col-sector">{formatSector(p.sector2Time)}</td>
+                      <td className="col-sector">{formatSector(p.sector3Time)}</td>
+                      <td className="col-time">{formatTime(p.lastLapTime)}</td>
+                      <td className={`col-time ${
+                        p.fastestLapTime === globalBest ? 'time-purple' : 
+                        (p.fastestLapTime > 0 ? 'time-green' : '')
+                      }`}>
+                        {formatTime(p.fastestLapTime)}
+                      </td>
+                      <td className="col-gap" style={{ textAlign: 'center', color: '#ffa500' }}>
+                        {formatGap(p, index, sortedParticipants)}
+                      </td>
+                      <td className="col-class">
+                        <span className={`class-badge ${p.state === 'Racing' ? 'racing' : ''}`}>
+                          {p.state || 'N/A'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
