@@ -320,12 +320,16 @@ class RaceAutoSaver {
     // Insérer les participants
     for (const result of results) {
       const participantCollisions = collisionsByDriver[result.participantid] || 0;
-      
+
       const cleanName = result.name
         .replace(' (AI)', '')
         .replace(/^[0-9\s]+/, '')
         .trim();
-      
+
+      // Récupérer is_player depuis raceData.participants
+      const participant = raceData.participants?.[result.participantid];
+      const isPlayer = participant?.IsPlayer === true || participant?.is_player === true || false;
+
       await execute(`
         INSERT INTO race_participants (
           race_history_id, participant_id, driver_name, is_player, vehicle_id,
@@ -335,7 +339,7 @@ class RaceAutoSaver {
         raceHistoryId,
         result.participantid,
         cleanName,
-        result.is_player ? 1 : 0,
+        isPlayer ? 1 : 0,
         result.attributes.VehicleId || null,
         result.attributes.RacePosition,
         result.attributes.FastestLapTime,

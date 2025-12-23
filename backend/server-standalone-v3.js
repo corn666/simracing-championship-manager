@@ -310,11 +310,13 @@ initDatabase().then(() => {
   const settingsRoutes = require('./routes/settings');
   const raceHistoryRoutes = require('./routes/race-history');
   const trackmapsRoutes = require('./routes/trackmaps');
-  
+  const statsRoutes = require('./routes/stats');
+
   app.use('/api/pit-wall', pitWallRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/race-history', raceHistoryRoutes);
   app.use('/api/trackmaps', trackmapsRoutes);
+  app.use('/api/stats', statsRoutes);
   
   // ============ SERVIR LE FRONTEND (APRÈS les routes API) ============
   app.use(express.static(publicPath));

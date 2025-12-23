@@ -5,6 +5,7 @@ const { initDatabase, all, get, run, prepare } = require('./database');
 const pitWallRoutes = require('./routes/pit-wall');
 const settingsRoutes = require('./routes/settings');
 const raceHistoryRoutes = require('./routes/race-history');
+const statsRoutes = require('./routes/stats');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -28,10 +29,11 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-// Routes Pit Wall, Settings et Race History
+// Routes Pit Wall, Settings, Race History et Stats
 app.use('/api/pit-wall', pitWallRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/race-history', raceHistoryRoutes);
+app.use('/api/stats', statsRoutes);
 
 // Système de points (position -> points)
 const POINTS_SYSTEM = {
