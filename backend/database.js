@@ -211,4 +211,79 @@ process.on('SIGTERM', () => {
   process.exit();
 });
 
-module.exports = { initDatabase, getDb: () => db, saveDatabase };
+// Wrapper methods pour compatibilité avec l'API callback de sqlite3
+function all(sql, params, callback) {
+  try {
+    const stmt = db.prepare(sql);
+    if (params && params.length > 0) {
+      stmt.bind(params);
+    }
+    const rows = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    if (callback) callback(null, rows);
+    return rows;
+  } catch (err) {
+    if (callback) callback(err, null);
+    throw err;
+  }
+}
+
+function get(sql, params, callback) {
+  try {
+    const stmt = db.prepare(sql);
+    if (params && params.length > 0) {
+      stmt.bind(params);
+    }
+    let row = null;
+    if (stmt.step()) {
+      row = stmt.getAsObject();
+    }
+    stmt.free();
+    if (callback) callback(null, row);
+    return row;
+  } catch (err) {
+    if (callback) callback(err, null);
+    throw err;
+  }
+}
+
+function run(sql, params, callback) {
+  try {
+    if (params && params.length > 0) {
+      db.run(sql, params);
+    } else {
+      db.run(sql);
+    }
+    const lastID = db.exec("SELECT last_insert_rowid()")[0]?.values[0][0] || 0;
+    const result = { lastID };
+    if (callback) callback.call(result, null);
+    return result;
+  } catch (err) {
+    if (callback) callback(err);
+    throw err;
+  }
+}
+
+function prepare(sql) {
+  const stmt = db.prepare(sql);
+  return {
+    run: function(...params) {
+      try {
+        stmt.bind(params);
+        stmt.step();
+        stmt.reset();
+      } catch (err) {
+        // Ignore
+      }
+    },
+    finalize: function(callback) {
+      stmt.free();
+      if (callback) callback(null);
+    }
+  };
+}
+
+module.exports = { initDatabase, getDb: () => db, saveDatabase, all, get, run, prepare };

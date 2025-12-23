@@ -1,26 +1,5 @@
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
-
-// ============ PILOTES ============
-export const getPilots = async () => {
-  const response = await fetch(`${API_URL}/pilots`);
-  return response.json();
-};
-
-export const createPilot = async (pilot) => {
-  const response = await fetch(`${API_URL}/pilots`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(pilot)
-  });
-  return response.json();
-};
-
-export const deletePilot = async (id) => {
-  const response = await fetch(`${API_URL}/pilots/${id}`, {
-    method: 'DELETE'
-  });
-  return response.json();
-};
+// Utiliser le même protocole/host/port que la page actuelle (pour mode standalone)
+const API_URL = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:${window.location.port}/api`;
 
 // ============ CHAMPIONNATS ============
 export const getChampionships = async () => {

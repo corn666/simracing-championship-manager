@@ -18,10 +18,17 @@ function Settings() {
   const [sslMessage, setSslMessage] = useState({ type: '', text: '' });
   const [sslStatus, setSslStatus] = useState(''); // 'configured', 'not_configured'
 
+  // Détecter si on est en HTTPS
+  const isHttps = window.location.protocol === 'https:';
+
   // Charger les paramètres au montage
   useEffect(() => {
     loadSettings();
-  }, []);
+    // Si on est connecté en HTTPS, cocher automatiquement la case SSL
+    if (isHttps) {
+      setSslEnabled(true);
+    }
+  }, [isHttps]);
 
   const loadSettings = async () => {
     try {
@@ -116,20 +123,52 @@ function Settings() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    
+
     input.onchange = (e) => {
       const file = e.target.files[0];
       if (file) {
-        // Note: Pour des raisons de sécurité, on ne peut pas obtenir le chemin complet
-        // L'utilisateur devra copier/coller le chemin manuellement
-        setMessage({ 
-          type: 'info', 
-          text: '💡 Copiez le chemin complet du fichier et collez-le dans le champ ci-dessus' 
-        });
+        // Le navigateur ne donne que le nom du fichier, pas le chemin complet
+        // On vérifie si c'est le bon fichier et on aide l'utilisateur
+        if (file.name === 'sms_stats_data.json') {
+          setMessage({
+            type: 'info',
+            text: `✅ Fichier "${file.name}" sélectionné.\n\n💡 Le navigateur ne peut pas récupérer le chemin complet pour des raisons de sécurité.\n\nCopiez le chemin complet du fichier depuis l'Explorateur Windows (clic droit → "Copier en tant que chemin") et collez-le dans le champ ci-dessus.`
+          });
+        } else {
+          setMessage({
+            type: 'error',
+            text: `⚠️ Le fichier sélectionné est "${file.name}".\n\nVeuillez sélectionner "sms_stats_data.json" généré par le serveur dédié AMS2.`
+          });
+        }
       }
     };
-    
+
     input.click();
+  };
+
+  const handleSslToggle = async (enabled) => {
+    setSslEnabled(enabled);
+
+    // Sauvegarder l'état SSL en base de données
+    try {
+      await fetch(`${API_BASE_URL}/api/settings/ssl_enabled`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: enabled ? 'true' : 'false' })
+      });
+
+      if (!enabled && isHttps) {
+        setSslMessage({
+          type: 'info',
+          text: '⚠️ SSL désactivé. Redémarrez l\'application pour passer en HTTP.'
+        });
+      } else if (!enabled) {
+        setSslMessage({ type: 'success', text: '✅ SSL désactivé.' });
+        setTimeout(() => setSslMessage({ type: '', text: '' }), 3000);
+      }
+    } catch (err) {
+      console.error('Erreur toggle SSL:', err);
+    }
   };
 
   const handleSslUpload = async () => {
@@ -231,7 +270,7 @@ function Settings() {
             </div>
 
             {message.text && (
-              <div className={`message message-${message.type}`}>
+              <div className={`message message-${message.type}`} style={{whiteSpace: 'pre-line'}}>
                 {message.text}
               </div>
             )}
@@ -270,12 +309,18 @@ function Settings() {
               <input
                 type="checkbox"
                 checked={sslEnabled}
-                onChange={(e) => setSslEnabled(e.target.checked)}
+                onChange={(e) => handleSslToggle(e.target.checked)}
                 style={{marginRight: '10px', width: '20px', height: '20px'}}
               />
-              <span>Activer SSL/HTTPS</span>
+              <span>Activer SSL/HTTPS {isHttps && '(actuellement connecté en HTTPS)'}</span>
             </label>
           </div>
+
+          {sslMessage.text && !sslEnabled && (
+            <div className={`message message-${sslMessage.type}`} style={{whiteSpace: 'pre-line', marginTop: '10px'}}>
+              {sslMessage.text}
+            </div>
+          )}
 
           {sslEnabled && (
             <div style={{marginTop: '20px', padding: '20px', background: '#f8f9fa', borderRadius: '8px'}}>
