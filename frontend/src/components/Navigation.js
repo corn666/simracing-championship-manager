@@ -43,8 +43,13 @@ const Navigation = () => {
           </Link>
         </li>
         <li>
+          <Link to="/stats" className={location.pathname === '/stats' ? 'active' : ''}>
+            Stats
+          </Link>
+        </li>
+        <li>
           <Link to="/settings" className={location.pathname === '/settings' ? 'active' : ''}>
-            ⚙️ Paramètres
+            Parametres
           </Link>
         </li>
       </ul>

@@ -11,6 +11,7 @@ import PitWall from './pages/PitWall';
 import LastRace from './pages/LastRace';
 import Settings from './pages/Settings';
 import RaceHistory from './pages/RaceHistory';
+import Stats from './pages/Stats';
 import './styles/App.css';
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
           <Route path="/pit-wall" element={<PitWall />} />
           <Route path="/last-race" element={<LastRace />} />
           <Route path="/race-history" element={<RaceHistory />} />
+          <Route path="/stats" element={<Stats />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </div>

@@ -245,15 +245,19 @@ router.post('/save', async (req, res) => {
     // Insérer les participants
     for (const result of results) {
       const participantCollisions = collisionsByDriver[result.participantid] || 0;
-      
+
       // Nettoyer le nom (enlever AI, espaces, caractères bizarres)
       const cleanName = result.name
         .replace(' (AI)', '')
         .replace(/^[0-9\s]+/, '')  // Enlever chiffres et espaces au début
         .trim();
-      
-      console.log('Inserting participant:', cleanName, 'for race', raceHistoryId);
-      
+
+      // Récupérer is_player depuis raceData.participants
+      const participant = raceData.participants?.[result.participantid];
+      const isPlayer = participant?.IsPlayer === true || participant?.is_player === true || false;
+
+      console.log('Inserting participant:', cleanName, 'isPlayer:', isPlayer, 'for race', raceHistoryId);
+
       await execute(`
         INSERT INTO race_participants (
           race_history_id, participant_id, driver_name, is_player,
@@ -263,7 +267,7 @@ router.post('/save', async (req, res) => {
         raceHistoryId,
         result.participantid,
         cleanName,
-        result.is_player ? 1 : 0,
+        isPlayer ? 1 : 0,
         result.attributes.RacePosition,
         result.attributes.FastestLapTime,
         result.attributes.Lap,
