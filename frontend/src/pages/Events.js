@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getEvents, createEvent, deleteEvent, getChampionships, getPilots } from '../services/api';
+import { getEvents, createEvent, deleteEvent, getChampionships } from '../services/api';
 
 const Events = () => {
   const [events, setEvents] = useState([]);
   const [championships, setChampionships] = useState([]);
-  const [pilots, setPilots] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [message, setMessage] = useState('');
   
@@ -20,7 +19,6 @@ const Events = () => {
   useEffect(() => {
     loadEvents();
     loadChampionships();
-    loadPilots();
   }, []);
 
   const loadEvents = async () => {
@@ -31,11 +29,6 @@ const Events = () => {
   const loadChampionships = async () => {
     const data = await getChampionships();
     setChampionships(data);
-  };
-
-  const loadPilots = async () => {
-    const data = await getPilots();
-    setPilots(data);
   };
 
   const handleSubmit = async (e) => {
