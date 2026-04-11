@@ -177,11 +177,13 @@ function RaceHistory() {
   };
 
   const formatTime = (ms) => {
-    if (!ms || ms === 0) return '---';
-    const minutes = Math.floor(ms / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
-    const millis = ms % 1000;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return '---';
+    const intMs = Math.round(n);
+    const minutes = Math.floor(intMs / 60000);
+    const seconds = Math.floor((intMs % 60000) / 1000);
+    const millis = intMs % 1000;
+    return `${minutes}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
   };
 
   const formatDuration = (seconds) => {
@@ -202,10 +204,12 @@ function RaceHistory() {
   };
 
   const formatSector = (ms) => {
-    if (!ms || ms === 0) return '---.---';
-    const seconds = Math.floor(ms / 1000);
-    const millis = ms % 1000;
-    return `${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return '---.---';
+    const intMs = Math.round(n);
+    const seconds = Math.floor(intMs / 1000);
+    const millis = intMs % 1000;
+    return `${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
   };
 
   const getTimeClass = (currentTime, previousTime, isFastestOverall) => {

@@ -328,19 +328,22 @@ function PitWall() {
   };
 
   const formatTime = (ms) => {
-    if (!ms || ms === 0) return '--:--:---';
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const milliseconds = ms % 1000;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return '--:--:---';
+    const intMs = Math.round(n);
+    const minutes = Math.floor(intMs / 60000);
+    const seconds = Math.floor((intMs % 60000) / 1000);
+    const milliseconds = intMs % 1000;
+    return `${minutes}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
   };
 
   const formatSector = (ms) => {
-    if (!ms || ms === 0) return '--:--';
-    const seconds = Math.floor(ms / 1000);
-    const milliseconds = ms % 1000;
-    return `${seconds}.${milliseconds.toString().padStart(3, '0')}`;
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return '--:--';
+    const intMs = Math.round(n);
+    const seconds = Math.floor(intMs / 1000);
+    const milliseconds = intMs % 1000;
+    return `${seconds}.${String(milliseconds).padStart(3, '0')}`;
   };
 
   const formatGap = (currentParticipant, index, sortedParticipants) => {

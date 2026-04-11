@@ -60,6 +60,41 @@ async function execute(sql, params = []) {
   }
 }
 
+// Nettoyer et normaliser un nom pour le dédoublonnage
+function cleanDriverName(name) {
+  if (!name) return '';
+  return String(name)
+    .replace(/\s*\(AI\)\s*/gi, '')
+    .replace(/^[0-9\s]+/, '')
+    .trim();
+}
+function normalizeKey(name) {
+  return cleanDriverName(name).toLowerCase();
+}
+
+// Dédoublonner les résultats : un pilote = une entrée (meilleure position, sinon plus de tours)
+function dedupeResults(results) {
+  const byKey = new Map();
+  results.forEach((r, idx) => {
+    const key = normalizeKey(r?.name) || `__anon_${idx}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, r);
+      return;
+    }
+    const rPos = r?.attributes?.RacePosition;
+    const ePos = existing?.attributes?.RacePosition;
+    const rRank = Number.isFinite(rPos) && rPos > 0 && rPos < 999 ? rPos : 9999;
+    const eRank = Number.isFinite(ePos) && ePos > 0 && ePos < 999 ? ePos : 9999;
+    const rLap = r?.attributes?.Lap || 0;
+    const eLap = existing?.attributes?.Lap || 0;
+    if (rRank < eRank || (rRank === eRank && rLap > eLap)) {
+      byKey.set(key, r);
+    }
+  });
+  return Array.from(byKey.values());
+}
+
 class RaceAutoSaver {
   constructor() {
     this.checkInterval = 10000; // 10 secondes
@@ -244,8 +279,8 @@ class RaceAutoSaver {
   async saveRace(raceData) {
     const setup = raceData.setup;
     const raceSession = raceData.stages.race1;
-    const results = Object.values(raceSession.results || {});
-    
+    const results = dedupeResults(Object.values(raceSession.results || {}));
+
     // Trouver le vainqueur
     const winner = results.find(r => r.attributes.RacePosition === 1);
     
@@ -321,10 +356,7 @@ class RaceAutoSaver {
     for (const result of results) {
       const participantCollisions = collisionsByDriver[result.participantid] || 0;
 
-      const cleanName = result.name
-        .replace(' (AI)', '')
-        .replace(/^[0-9\s]+/, '')
-        .trim();
+      const cleanName = cleanDriverName(result.name);
 
       // Récupérer is_player depuis raceData.participants
       const participant = raceData.participants?.[result.participantid];

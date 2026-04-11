@@ -26,12 +26,23 @@ async function getSmsStatsPath() {
 
 // Helper pour formater les temps
 function formatTime(ms) {
-  if (!ms || ms === 0) return '--:--:---';
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  const milliseconds = ms % 1000;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '--:--:---';
+  const intMs = Math.round(n);
+  const minutes = Math.floor(intMs / 60000);
+  const seconds = Math.floor((intMs % 60000) / 1000);
+  const milliseconds = intMs % 1000;
+  return `${minutes}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+}
+
+// Normaliser un nom de pilote (pour dédoublonnage)
+function normalizeName(name) {
+  if (!name) return '';
+  return String(name)
+    .replace(/\s*\(AI\)\s*/gi, '')
+    .replace(/^[0-9\s]+/, '')
+    .trim()
+    .toLowerCase();
 }
 
 function formatGap(ms, isLeader) {
@@ -141,27 +152,38 @@ function parseRaceData(jsonData) {
       };
     }
 
+    // Helpers pour récupérer les champs de participants (AMS2 utilise refid / RefId / is_player / IsPlayer)
+    const getPRefId = (p) => (p?.refid ?? p?.RefId);
+    const getPName = (p) => (p?.name ?? p?.Name ?? 'Unknown');
+    const getPIsPlayer = (p) => (p?.is_player === 1 || p?.is_player === true || p?.IsPlayer === true);
+    const getPVehicleId = (p) => (p?.vehicle_id ?? p?.VehicleId ?? 0);
+
     // Construire les données du tableau en combinant participants ET résultats
-    const drivers = [];
-    
-    // D'abord, ajouter tous les participants avec résultats
-    resultsArray
-      .filter(r => r.attributes.State === 'Finished' || r.attributes.State === 'Racing')
-      .forEach((result) => {
-        const participant = participantsArray.find(p => p.refid === result.refid);
-        drivers.push(createDriverEntry(result, participant, bestLapTime));
+    const rawDrivers = [];
+
+    // 1) Tous les résultats (Finished, Racing, DNF, Retired, etc.)
+    resultsArray.forEach((result) => {
+      const participant = participantsArray.find(p => {
+        const pRef = getPRefId(p);
+        return pRef != null && pRef == result.refid; // eslint-disable-line eqeqeq
       });
-    
-    // Ensuite, ajouter les participants SANS résultats (DNS, DNF, etc.)
+      rawDrivers.push(createDriverEntry(result, participant, bestLapTime));
+    });
+
+    // 2) Participants sans résultat (vrais DNS)
     participantsArray.forEach(p => {
-      const hasResult = resultsArray.some(r => r.refid === p.refid);
+      const pRef = getPRefId(p);
+      const hasResult = resultsArray.some(r => r.refid != null && r.refid == pRef); // eslint-disable-line eqeqeq
       if (!hasResult) {
-        // Créer un résultat fictif pour ce participant
+        const participantId = Object.keys(participants).find(key => {
+          const pref = participants[key]?.refid ?? participants[key]?.RefId;
+          return pref != null && pref == pRef; // eslint-disable-line eqeqeq
+        });
         const fakeResult = {
-          name: p.name || p.Name || 'Unknown',
-          refid: p.refid,
-          is_player: p.is_player,
-          participantid: Object.keys(participants).find(key => participants[key].RefId === p.refid),
+          name: getPName(p),
+          refid: pRef,
+          is_player: getPIsPlayer(p) ? 1 : 0,
+          participantid: participantId,
           attributes: {
             State: 'DNS',
             RacePosition: 999,
@@ -174,19 +196,50 @@ function parseRaceData(jsonData) {
             CurrentSector1Time: 0,
             CurrentSector2Time: 0,
             CurrentSector3Time: 0,
-            VehicleId: p.vehicle_id || 0
+            VehicleId: getPVehicleId(p)
           }
         };
-        drivers.push(createDriverEntry(fakeResult, p, bestLapTime));
+        rawDrivers.push(createDriverEntry(fakeResult, p, bestLapTime));
       }
     });
-    
-    // Trier par position
+
+    // 3) Dédoublonnage par nom normalisé : pour un même pilote, conserver la meilleure entrée
+    //    (meilleure = position la plus basse hors 999, sinon celle avec le plus de tours, sinon meilleur tour)
+    const scoreOf = (d) => {
+      const pos = parseInt(d.pos, 10);
+      const posRank = Number.isFinite(pos) && pos > 0 && pos < 999 ? pos : 9999;
+      const lap = parseInt(String(d.lap).replace(/^L/i, ''), 10) || 0;
+      return { posRank, lap };
+    };
+    const byName = new Map();
+    rawDrivers.forEach(d => {
+      const key = normalizeName(d.name);
+      if (!key) {
+        byName.set(`__anon_${byName.size}`, d);
+        return;
+      }
+      const existing = byName.get(key);
+      if (!existing) {
+        byName.set(key, d);
+        return;
+      }
+      const a = scoreOf(d);
+      const b = scoreOf(existing);
+      // Priorité: posRank le plus bas (meilleure position), puis plus de tours
+      if (a.posRank < b.posRank || (a.posRank === b.posRank && a.lap > b.lap)) {
+        byName.set(key, d);
+      }
+    });
+    const drivers = Array.from(byName.values());
+
+    // Trier par position (999 = DNS à la fin)
     drivers.sort((a, b) => {
-      const posA = parseInt(a.pos);
-      const posB = parseInt(b.pos);
-      if (posA === 999) return 1;  // DNS à la fin
-      if (posB === 999) return -1;
+      const posA = parseInt(a.pos, 10);
+      const posB = parseInt(b.pos, 10);
+      const aDns = !Number.isFinite(posA) || posA >= 999;
+      const bDns = !Number.isFinite(posB) || posB >= 999;
+      if (aDns && !bDns) return 1;
+      if (!aDns && bDns) return -1;
       return posA - posB;
     });
 

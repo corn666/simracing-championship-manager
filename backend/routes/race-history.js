@@ -61,6 +61,44 @@ function getDbType() {
   }
 }
 
+// Nettoyer et normaliser un nom pour le dédoublonnage
+function cleanDriverName(name) {
+  if (!name) return '';
+  return String(name)
+    .replace(/\s*\(AI\)\s*/gi, '')
+    .replace(/^[0-9\s]+/, '')
+    .trim();
+}
+function normalizeKey(name) {
+  return cleanDriverName(name).toLowerCase();
+}
+
+// Dédoublonner les résultats d'une course : pour un même pilote (nom normalisé),
+// ne conserver qu'une entrée — celle avec la meilleure position (hors 999), sinon
+// celle avec le plus de tours complétés. Protège les championnats contre les
+// doublons dus aux reconnexions de joueurs.
+function dedupeResults(results) {
+  const byKey = new Map();
+  results.forEach((r, idx) => {
+    const key = normalizeKey(r?.name) || `__anon_${idx}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, r);
+      return;
+    }
+    const rPos = r?.attributes?.RacePosition;
+    const ePos = existing?.attributes?.RacePosition;
+    const rRank = Number.isFinite(rPos) && rPos > 0 && rPos < 999 ? rPos : 9999;
+    const eRank = Number.isFinite(ePos) && ePos > 0 && ePos < 999 ? ePos : 9999;
+    const rLap = r?.attributes?.Lap || 0;
+    const eLap = existing?.attributes?.Lap || 0;
+    if (rRank < eRank || (rRank === eRank && rLap > eLap)) {
+      byKey.set(key, r);
+    }
+  });
+  return Array.from(byKey.values());
+}
+
 // Fonction pour compter les collisions dans une course
 function countCollisions(raceData) {
   let totalCollisions = 0;
@@ -166,7 +204,7 @@ router.post('/save', async (req, res) => {
       });
     }
     
-    const results = Object.values(raceSession.results || {});
+    const results = dedupeResults(Object.values(raceSession.results || {}));
     const winner = results.find(r => r.attributes.RacePosition === 1);
     
     // Trouver le meilleur tour
@@ -247,10 +285,7 @@ router.post('/save', async (req, res) => {
       const participantCollisions = collisionsByDriver[result.participantid] || 0;
 
       // Nettoyer le nom (enlever AI, espaces, caractères bizarres)
-      const cleanName = result.name
-        .replace(' (AI)', '')
-        .replace(/^[0-9\s]+/, '')  // Enlever chiffres et espaces au début
-        .trim();
+      const cleanName = cleanDriverName(result.name);
 
       // Récupérer is_player depuis raceData.participants
       const participant = raceData.participants?.[result.participantid];
